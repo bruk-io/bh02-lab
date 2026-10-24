@@ -2,8 +2,9 @@
 trusted side into entries, hashed, and packed again in one canonical form for the store.
 
 The sandbox's tar is untrusted. Only regular files with relative paths inside the workspace are
-read; a link, a device, an absolute path, a `..`, or a workspace over the size limit is refused,
-so nothing the model arranged can point the judge outside the snapshot. The canonical tar has
+taken: a link or a device is left out (the judge never sees it), and an absolute path, a `..`, or
+a workspace over the size limit is refused, so nothing the model arranged can point the judge
+outside the snapshot. The canonical tar has
 fixed owners and times, so the same files always make the same bytes.
 
 `entries_of` and `packed` work on bytes in memory; `read_tree` is the one function that reads a
@@ -31,26 +32,25 @@ def entries_of(tar_bytes: bytes, max_bytes: int = MAX_BYTES) -> list[Entry]:
     """The kept files of a tar, in its order.
 
     Raises:
-        SnapshotError: The tar can't be read, holds something other than regular files and
-            directories, names a path outside the workspace, or is over `max_bytes` unpacked.
+        SnapshotError: The tar can't be read, names a path outside the workspace, or is over
+            `max_bytes` unpacked.
     """
     entries: list[Entry] = []
     total = 0
     try:
         with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as archive:
             for member in archive:
-                if member.isdir():
-                    continue
                 if not member.isreg():
-                    raise SnapshotError(f"{member.name!r} is not a regular file; a snapshot holds only files")
+                    continue  # the root ".", directories, links, devices
                 path = _relative(member.name)
+                if not kept(path):
+                    continue
                 total += member.size
                 if total > max_bytes:
                     raise SnapshotError(f"the workspace is over {max_bytes} bytes unpacked")
                 file = archive.extractfile(member)
                 content = file.read() if file is not None else b""
-                if kept(path):
-                    entries.append(Entry(path, bool(member.mode & 0o111), content))
+                entries.append(Entry(path, bool(member.mode & 0o111), content))
     except tarfile.TarError as error:
         raise SnapshotError(f"the workspace tar can't be read: {error}") from error
     return entries
@@ -70,19 +70,13 @@ def packed(entries: Iterable[Entry]) -> bytes:
 
 
 def read_tree(root: Path) -> list[Entry]:
-    """The kept files under `root`, links not followed (a link is refused).
-
-    Raises:
-        SnapshotError: A path under `root` is a link or not a regular file.
-    """
+    """The kept regular files under `root`; links are neither followed nor taken."""
     entries: list[Entry] = []
     for directory, _, files in os.walk(root, followlinks=False):
         for name in files:
             path = Path(directory) / name
             relative = path.relative_to(root).as_posix()
-            if path.is_symlink() or not path.is_file():
-                raise SnapshotError(f"{relative!r} is not a regular file; a snapshot holds only files")
-            if kept(relative):
+            if not path.is_symlink() and path.is_file() and kept(relative):
                 entries.append(Entry(relative, os.access(path, os.X_OK), path.read_bytes()))
     return entries
 

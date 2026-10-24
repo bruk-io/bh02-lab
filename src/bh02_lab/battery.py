@@ -114,20 +114,22 @@ def judge_sha(tasks: Iterable[Task], judge_source: bytes) -> str:
     return "judge-" + tree_digest(entries)[:16]
 
 
-def load_battery(name: str, root: Path = BATTERIES) -> Mapping[str, Task]:
-    """The tasks of battery `name`, by id.
+def load_battery(name: str, root: Path = BATTERIES, *, with_checks: bool = True) -> Mapping[str, Task]:
+    """The tasks of battery `name`, by id. `with_checks=False` reads a copy that holds no checks
+    (the rollout runner's), where each task's `check` is empty.
 
     Raises:
         BatteryError: The battery has no tasks, or a task lacks a part or has a bad `task.toml`.
     """
     directory = root / name
-    tasks = {path.name: _task(path) for path in sorted(directory.iterdir()) if path.is_dir()} if directory.is_dir() else {}
+    paths = sorted(path for path in directory.iterdir() if path.is_dir()) if directory.is_dir() else []
+    tasks = {path.name: _task(path, with_checks) for path in paths}
     if not tasks:
         raise BatteryError(f"battery {name!r} has no tasks under {directory}")
     return tasks
 
 
-def _task(path: Path) -> Task:
+def _task(path: Path, with_checks: bool) -> Task:
     try:
         meta = tomllib.loads((path / "task.toml").read_text(encoding="utf-8"))
         prompt = (path / "prompt.md").read_text(encoding="utf-8")
@@ -135,6 +137,6 @@ def _task(path: Path) -> Task:
     except (OSError, KeyError, ValueError, TypeError) as error:
         raise BatteryError(f"task {path.name}: {type(error).__name__}: {error}") from error
     parts = {part: tuple(read_tree(path / part)) if (path / part).is_dir() else () for part in ("repo", "check", "reference")}
-    if not parts["repo"] or not parts["check"]:
+    if not parts["repo"] or (with_checks and not parts["check"]):
         raise BatteryError(f"task {path.name} needs a repo/ and a check/ directory, each with files")
     return Task(path.name, title, checks, prompt, parts["repo"], parts["check"], parts["reference"])

@@ -36,12 +36,15 @@ def test_packing_is_canonical_and_round_trips():
     assert sorted(entries_of(tar), key=lambda e: e.path) == sorted(FILES, key=lambda e: e.path)
 
 
-def test_a_link_is_refused():
+def test_a_link_is_left_out():
     link = tarfile.TarInfo("evil")
     link.type = tarfile.SYMTYPE
     link.linkname = "/etc/passwd"
-    with pytest.raises(SnapshotError, match="not a regular file"):
-        entries_of(_tar([(link, b"")]))
+    assert entries_of(_tar([(link, b""), (tarfile.TarInfo("ok.py"), b"x")])) == [Entry("ok.py", False, b"x")]
+
+
+def test_a_virtual_environment_is_left_out():
+    assert entries_of(_tar([(tarfile.TarInfo(".venv/bin/python"), b"elf")])) == []
 
 
 @pytest.mark.parametrize("name", ["/etc/passwd", "../outside.py", "a/../../b"])

@@ -74,3 +74,15 @@ def test_the_judge_pin_moves_with_a_check_and_not_otherwise():
     edited = Task(first.task_id, first.title, first.checks, first.prompt, first.repo,
                   (Entry("test_x.py", False, b"assert True"),), first.reference)  # fmt: skip
     assert judge_sha([edited, *tasks[1:]], b"judge v1") != base
+
+
+def test_a_copy_without_checks_loads_for_the_runner(tmp_path: Path):
+    import shutil
+
+    from bh02_lab.battery import BATTERIES
+
+    shutil.copytree(BATTERIES / "core", tmp_path / "core", ignore=shutil.ignore_patterns("check", "reference"))
+    tasks = load_battery("core", tmp_path, with_checks=False)
+    assert set(tasks) == set(TASKS) and all(not task.check for task in tasks.values())
+    with pytest.raises(Exception, match="check/"):
+        load_battery("core", tmp_path)
