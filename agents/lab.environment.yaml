@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://platform.claude.com/schemas/ant/beta/environment.json
+# The lab lead's sandbox. It holds the bh02-lab CLI and the gate token (a vault credential,
+# substituted only on requests to the gate's host, so the agent never sees its value) and
+# nothing else: no Modal, Hugging Face or Anthropic credential.
+# scripts/apply-agents adds the gate's host to allowed_hosts.
+name: bh02-lab
+config:
+  type: cloud
+  packages:
+    pip:
+      - "bh02-lab @ git+https://github.com/bruk-io/bh02-lab@main"
+  networking:
+    type: limited
+    allow_package_managers: true
+    allowed_hosts:
+      - github.com
+      - codeload.github.com

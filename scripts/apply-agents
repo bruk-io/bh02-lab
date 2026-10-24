@@ -1,0 +1,133 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["anthropic>=2.3", "pyyaml>=6", "click>=8.1"]
+# ///
+"""Put the lab lead on Managed Agents from the files in agents/, and start a run by hand.
+
+`apply` creates (or, with the ids it kept in agents/applied.json, reuses) three things: the
+environment (agents/lab.environment.yaml, with the gate's host added to its allowed hosts), a
+vault holding the gate token as an environment-variable credential that is substituted only on
+requests to the gate's host, and the agent (agents/lab-lead.agent.md: frontmatter, then the system
+prompt). An agent that exists is updated, which makes a new version.
+
+`run` starts one session of the lead with the vault and a spending cap, and sends it the task.
+
+It needs ANTHROPIC_API_KEY, BH02_LAB_GATE_URL and BH02_LAB_TOKEN in the environment of the machine
+it runs on. The Anthropic key never goes anywhere else: not into the environment, not to Modal.
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+import anthropic
+import click
+import yaml
+
+AGENTS = Path(__file__).resolve().parent.parent / "agents"
+APPLIED = AGENTS / "applied.json"
+
+
+def _need(name: str) -> str:
+    value = os.environ.get(name, "")
+    if not value:
+        sys.exit(f"error: set {name}")
+    return value
+
+
+def _client() -> anthropic.Anthropic:
+    return anthropic.Anthropic(api_key=_need("ANTHROPIC_API_KEY"))  # the SDK sends the beta header itself
+
+
+def _agent_file() -> tuple[dict[str, Any], str]:
+    text = (AGENTS / "lab-lead.agent.md").read_text(encoding="utf-8")
+    _, front, body = text.split("---\n", 2)
+    return yaml.safe_load(front), body.strip()
+
+
+def _applied() -> dict[str, str]:
+    return json.loads(APPLIED.read_text()) if APPLIED.exists() else {}
+
+
+@click.group()
+def main() -> None:
+    """The lab lead on Managed Agents."""
+
+
+@main.command()
+def apply() -> None:
+    """Create or update the environment, the vault and the agent."""
+    client = _client()
+    gate_host = urlparse(_need("BH02_LAB_GATE_URL")).hostname
+    if not gate_host:
+        sys.exit("error: BH02_LAB_GATE_URL has no host")
+    ids = _applied()
+
+    if "environment" not in ids:
+        environment = yaml.safe_load((AGENTS / "lab.environment.yaml").read_text(encoding="utf-8"))
+        environment["config"]["networking"]["allowed_hosts"].append(gate_host)
+        ids["environment"] = client.beta.environments.create(**environment).id
+
+    if "vault" not in ids:
+        vault = client.beta.vaults.create(display_name="bh02-lab", metadata={"purpose": "gate token"})
+        client.beta.vaults.credentials.create(
+            vault_id=vault.id,
+            display_name="bh02-lab gate token",
+            auth={
+                "type": "environment_variable",
+                "secret_name": "BH02_LAB_TOKEN",
+                "secret_value": _need("BH02_LAB_TOKEN"),
+                "networking": {"type": "limited", "allowed_hosts": [gate_host]},
+                "injection_location": {"header": True},
+            },
+        )
+        ids["vault"] = vault.id
+
+    front, system = _agent_file()
+    fields = {
+        "name": front["name"],
+        "model": front["model"],
+        "description": front.get("description"),
+        "tools": front["tools"],
+        "system": system,
+    }
+    if "agent" in ids:
+        agent = client.beta.agents.update(ids["agent"], **fields)
+    else:
+        agent = client.beta.agents.create(**fields)
+    ids["agent"] = agent.id
+    APPLIED.write_text(json.dumps(ids, indent=2) + "\n")
+    click.echo(json.dumps(ids | {"agent_version": agent.version}, indent=2))
+
+
+@main.command()
+@click.option("--k", default=5, show_default=True, help="Seeds per task for each battery run.")
+@click.option("--budget-usd", default=10, show_default=True, help="The session's spending cap.")
+def run(k: int, budget_usd: int) -> None:
+    """Start the Phase 0 noise measurement: two battery runs of the incumbent, compared."""
+    ids = _applied()
+    if not {"agent", "environment", "vault"} <= ids.keys():
+        sys.exit("error: run `scripts/apply-agents apply` first")
+    gate = _need("BH02_LAB_GATE_URL")
+    task = (
+        f"The gate is at {gate}. Run `bh02-lab pins`, then run the core battery on the incumbent twice, "
+        f"each with `bh02-lab battery run --k {k}`, one after the other. Report each run's score, band and "
+        "completeness, whether the two bands overlap, and the pins they ran on."
+    )
+    session = _client().beta.sessions.create(
+        agent=ids["agent"],
+        environment_id=ids["environment"],
+        vault_ids=[ids["vault"]],
+        title="Phase 0: incumbent noise band",
+        budget={"type": "limit", "max_list_cost": {"amount": str(budget_usd * 100), "currency": "USD"}},
+        initial_events=[{"type": "user.message", "content": [{"type": "text", "text": task}]}],
+    )
+    click.echo(json.dumps({"session": session.id}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

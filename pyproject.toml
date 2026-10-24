@@ -62,7 +62,7 @@ explicit_package_bases = true
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["modal", "modal.*", "fastapi", "fastapi.*"]
+module = ["modal", "modal.*", "fastapi", "fastapi.*", "datasets", "trl", "unsloth", "unsloth.*"]  # GPU-only packages live in the Modal image
 ignore_missing_imports = true
 
 # The architecture gate: `scripts/arch-check` (it indexes first; a bare `pypeeker check` against a
@@ -86,5 +86,6 @@ battery = ["hashing", "snapshot"]           # tasks, the check command, the verd
 gate_core = ["contract", "stats"]           # what a battery run asks and adds up to; pure
 gate_api = ["contract", "gate_core"]        # the HTTPS API over injected stores
 cli = []                                    # the lab lead's tool: HTTP only
+proof = []                                  # the training proof's data and pass rule; pure
 sandbox = []                                # runs inside the rollout sandbox: standard library only
-modal_apps = ["battery", "contract", "gate_api", "gate_core", "hashing", "pins", "snapshot", "stats"]
+modal_apps = ["battery", "contract", "gate_api", "gate_core", "hashing", "pins", "proof", "snapshot", "stats"]
