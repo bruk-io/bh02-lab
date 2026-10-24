@@ -14,7 +14,7 @@ def test_the_genome_crosses_sorted() -> None:
 
 
 def test_a_rollout_survives_the_wire() -> None:
-    rollout = Rollout(REQUEST, "snap", "trans", "replied")
+    rollout = Rollout(REQUEST, "run1", "snap", "trans", "replied")
     assert Rollout.from_json(rollout.to_json()) == rollout
 
 

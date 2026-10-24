@@ -1,0 +1,312 @@
+{
+ "cases": [
+  {
+   "name": "get missing gives default",
+   "steps": [
+    {
+     "call": "cache:LRUCache",
+     "args": [
+      2
+     ],
+     "bind": "c"
+    },
+    {
+     "on": "c",
+     "method": "get",
+     "args": [
+      "x",
+      7
+     ],
+     "expect": {
+      "returns": 7
+     }
+    }
+   ]
+  },
+  {
+   "name": "put then get",
+   "steps": [
+    {
+     "call": "cache:LRUCache",
+     "args": [
+      2
+     ],
+     "bind": "c"
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      "a",
+      1
+     ]
+    },
+    {
+     "on": "c",
+     "method": "get",
+     "args": [
+      "a"
+     ],
+     "expect": {
+      "returns": 1
+     }
+    },
+    {
+     "len": "c",
+     "expect": {
+      "returns": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "evicts least recently used",
+   "steps": [
+    {
+     "call": "cache:LRUCache",
+     "args": [
+      2
+     ],
+     "bind": "c"
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      "a",
+      1
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      "b",
+      2
+     ]
+    },
+    {
+     "on": "c",
+     "method": "get",
+     "args": [
+      "a"
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      "c",
+      3
+     ]
+    },
+    {
+     "on": "c",
+     "method": "get",
+     "args": [
+      "b"
+     ],
+     "expect": {
+      "returns": null
+     }
+    },
+    {
+     "on": "c",
+     "method": "get",
+     "args": [
+      "a"
+     ],
+     "expect": {
+      "returns": 1
+     }
+    },
+    {
+     "on": "c",
+     "method": "get",
+     "args": [
+      "c"
+     ],
+     "expect": {
+      "returns": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "put counts as use",
+   "steps": [
+    {
+     "call": "cache:LRUCache",
+     "args": [
+      2
+     ],
+     "bind": "c"
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      "a",
+      1
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      "b",
+      2
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      "a",
+      10
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      "c",
+      3
+     ]
+    },
+    {
+     "on": "c",
+     "method": "get",
+     "args": [
+      "a"
+     ],
+     "expect": {
+      "returns": 10
+     }
+    },
+    {
+     "on": "c",
+     "method": "get",
+     "args": [
+      "b"
+     ],
+     "expect": {
+      "returns": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "never over capacity",
+   "steps": [
+    {
+     "call": "cache:LRUCache",
+     "args": [
+      3
+     ],
+     "bind": "c"
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      0,
+      0
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      1,
+      1
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      2,
+      2
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      3,
+      3
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      4,
+      4
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      5,
+      5
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      6,
+      6
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      7,
+      7
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      8,
+      8
+     ]
+    },
+    {
+     "on": "c",
+     "method": "put",
+     "args": [
+      9,
+      9
+     ]
+    },
+    {
+     "len": "c",
+     "expect": {
+      "returns": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "capacity below one raises",
+   "steps": [
+    {
+     "call": "cache:LRUCache",
+     "args": [
+      0
+     ],
+     "expect": {
+      "raises": "ValueError"
+     }
+    }
+   ]
+  }
+ ]
+}

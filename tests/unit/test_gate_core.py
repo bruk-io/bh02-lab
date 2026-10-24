@@ -46,3 +46,10 @@ def test_a_run_with_no_verdicts_has_no_score() -> None:
     requests = requests_for(ask, ["a"], "im", "srv")
     report = summary(ask, requests, [RuntimeError("down")], {})
     assert "score" not in report and report["complete"] is False
+
+
+def test_one_seed_per_task_gives_a_score_and_no_band() -> None:
+    ask = BatteryAsk(frozenset(), 1, "core")
+    requests = requests_for(ask, ["a", "b"], "im", "srv")
+    report = summary(ask, requests, [Verdict("s1", "a", True, "j"), Verdict("s2", "b", False, "j")], {})
+    assert report["score"] == pytest.approx(0.5) and report["band"] is None

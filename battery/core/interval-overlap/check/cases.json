@@ -1,0 +1,175 @@
+{
+ "cases": [
+  {
+   "name": "back to back do not overlap",
+   "steps": [
+    {
+     "call": "calendar_utils:overlaps",
+     "args": [
+      [
+       9,
+       10
+      ],
+      [
+       10,
+       11
+      ]
+     ],
+     "expect": {
+      "returns": false
+     }
+    },
+    {
+     "call": "calendar_utils:overlaps",
+     "args": [
+      [
+       10,
+       11
+      ],
+      [
+       9,
+       10
+      ]
+     ],
+     "expect": {
+      "returns": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "real overlap",
+   "steps": [
+    {
+     "call": "calendar_utils:overlaps",
+     "args": [
+      [
+       9,
+       11
+      ],
+      [
+       10,
+       12
+      ]
+     ],
+     "expect": {
+      "returns": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "containment overlaps",
+   "steps": [
+    {
+     "call": "calendar_utils:overlaps",
+     "args": [
+      [
+       9,
+       17
+      ],
+      [
+       12,
+       13
+      ]
+     ],
+     "expect": {
+      "returns": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "merge unsorted",
+   "steps": [
+    {
+     "call": "calendar_utils:merge",
+     "args": [
+      [
+       [
+        5,
+        7
+       ],
+       [
+        1,
+        3
+       ],
+       [
+        2,
+        4
+       ]
+      ]
+     ],
+     "expect": {
+      "returns": [
+       [
+        1,
+        4
+       ],
+       [
+        5,
+        7
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "merge keeps the longer end",
+   "steps": [
+    {
+     "call": "calendar_utils:merge",
+     "args": [
+      [
+       [
+        1,
+        10
+       ],
+       [
+        2,
+        3
+       ]
+      ]
+     ],
+     "expect": {
+      "returns": [
+       [
+        1,
+        10
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "merge touching",
+   "steps": [
+    {
+     "call": "calendar_utils:merge",
+     "args": [
+      [
+       [
+        3,
+        4
+       ],
+       [
+        1,
+        3
+       ]
+      ]
+     ],
+     "expect": {
+      "returns": [
+       [
+        1,
+        4
+       ]
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

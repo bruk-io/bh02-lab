@@ -61,3 +61,17 @@ def test_a_workspace_over_the_limit_is_refused() -> None:
 def test_garbage_is_refused() -> None:
     with pytest.raises(SnapshotError, match="can't be read"):
         entries_of(b"not a tar at all" * 100)
+
+
+def test_a_path_with_a_newline_cannot_stand_for_two_files() -> None:
+    a, b = Entry("a", False, b"1"), Entry("b", False, b"2")
+    from bh02_lab.hashing import digest
+
+    forged = Entry(f"a\n644 {digest(b'2')} b", False, b"1")
+    assert tree_digest([forged]) != tree_digest([a, b])
+
+
+def test_a_workspace_with_too_many_files_is_refused() -> None:
+    members = [(tarfile.TarInfo(f"f{i}"), b"") for i in range(4)]
+    with pytest.raises(SnapshotError, match="over 3 files"):
+        entries_of(_tar(members), max_files=3)

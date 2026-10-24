@@ -35,8 +35,8 @@ build-backend = "hatchling.build"
 packages = ["src/bh02_lab"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = ["--import-mode=importlib", "-p", "no:cacheprovider"]
+testpaths = ["tests", "src"]
+addopts = ["--import-mode=importlib", "-p", "no:cacheprovider", "--doctest-modules"]
 consider_namespace_packages = true
 markers = ["modal: needs Modal credentials and deployed apps; run only when asked"]
 
@@ -83,9 +83,10 @@ stats = []                                  # score, band, paired difference; pu
 snapshot = ["hashing"]                      # tar bytes <-> entries; reads a directory in read_tree only
 pins = ["hashing"]                          # pins.toml as values, the serving hash
 battery = ["hashing", "snapshot"]           # tasks, the check command, the verdict rule
+rollout_core = ["hashing", "snapshot"]       # what a finished rollout was; pure
 gate_core = ["contract", "stats"]           # what a battery run asks and adds up to; pure
 gate_api = ["contract", "gate_core"]        # the HTTPS API over injected stores
 cli = []                                    # the lab lead's tool: HTTP only
 proof = []                                  # the training proof's data and pass rule; pure
 sandbox = []                                # runs inside the rollout sandbox: standard library only
-modal_apps = ["battery", "contract", "gate_api", "gate_core", "hashing", "pins", "proof", "snapshot", "stats"]
+modal_apps = ["battery", "contract", "gate_api", "gate_core", "hashing", "pins", "proof", "rollout_core", "snapshot", "stats"]

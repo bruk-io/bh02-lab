@@ -1,0 +1,88 @@
+{
+ "cases": [
+  {
+   "name": "simple title",
+   "steps": [
+    {
+     "call": "text:slugify",
+     "args": [
+      "Hello World"
+     ],
+     "expect": {
+      "returns": "hello-world"
+     }
+    }
+   ]
+  },
+  {
+   "name": "accents become ascii",
+   "steps": [
+    {
+     "call": "text:slugify",
+     "args": [
+      "Café Crème Brûlée"
+     ],
+     "expect": {
+      "returns": "cafe-creme-brulee"
+     }
+    }
+   ]
+  },
+  {
+   "name": "punctuation runs become one hyphen",
+   "steps": [
+    {
+     "call": "text:slugify",
+     "args": [
+      "  C++ & Rust -- a comparison!! "
+     ],
+     "expect": {
+      "returns": "c-rust-a-comparison"
+     }
+    }
+   ]
+  },
+  {
+   "name": "other non-ascii is dropped",
+   "steps": [
+    {
+     "call": "text:slugify",
+     "args": [
+      "東京 Tokyo 2026"
+     ],
+     "expect": {
+      "returns": "tokyo-2026"
+     }
+    }
+   ]
+  },
+  {
+   "name": "cut to fifty without a trailing hyphen",
+   "steps": [
+    {
+     "call": "text:slugify",
+     "args": [
+      "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word "
+     ],
+     "expect": {
+      "returns": "word-word-word-word-word-word-word-word-word-word"
+     }
+    }
+   ]
+  },
+  {
+   "name": "nothing sluggable gives empty",
+   "steps": [
+    {
+     "call": "text:slugify",
+     "args": [
+      "!!! ???"
+     ],
+     "expect": {
+      "returns": ""
+     }
+    }
+   ]
+  }
+ ]
+}

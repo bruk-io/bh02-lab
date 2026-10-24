@@ -1,0 +1,84 @@
+{
+ "cases": [
+  {
+   "name": "plain rows",
+   "steps": [
+    {
+     "call": "report:total_by_category",
+     "args": [
+      "date,description,category,amount\n2026-01-01,Coffee,food,3.50\n2026-01-02,Bus,travel,2.75\n2026-01-03,Bagel,food,2.00\n"
+     ],
+     "expect": {
+      "approx": {
+       "food": 5.5,
+       "travel": 2.75
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "quoted comma in description",
+   "steps": [
+    {
+     "call": "report:total_by_category",
+     "args": [
+      "date,description,category,amount\n2026-01-01,\"Lunch, team\",food,40.00\n2026-01-02,Taxi,travel,15\n"
+     ],
+     "expect": {
+      "approx": {
+       "food": 40.0,
+       "travel": 15.0
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "quoted quote in description",
+   "steps": [
+    {
+     "call": "report:total_by_category",
+     "args": [
+      "date,description,category,amount\n2026-01-01,\"The \"\"good\"\" pens\",office,9.99\n"
+     ],
+     "expect": {
+      "approx": {
+       "office": 9.99
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "blank lines are ignored",
+   "steps": [
+    {
+     "call": "report:total_by_category",
+     "args": [
+      "date,description,category,amount\n\n2026-01-01,Coffee,food,3\n\n2026-01-02,Tea,food,2\n\n"
+     ],
+     "expect": {
+      "approx": {
+       "food": 5.0
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "header only is empty",
+   "steps": [
+    {
+     "call": "report:total_by_category",
+     "args": [
+      "date,description,category,amount\n"
+     ],
+     "expect": {
+      "returns": {}
+     }
+    }
+   ]
+  }
+ ]
+}

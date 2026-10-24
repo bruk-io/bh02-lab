@@ -69,13 +69,16 @@ def _settings() -> tuple[str, str]:
 def _call(
     method: str, path: str, body: Mapping[str, Any] | None = None, sleep: Callable[[float], None] = time.sleep
 ) -> Any:
+    """One gate call. A GET is retried on a server error; a POST never is, since the gate may have
+    acted before it failed, and a second battery run spends the GPU time again."""
     url, token = _settings()
-    attempt = 1
+    attempt = 1 if method == "GET" else _RETRIES
     while True:
         try:
             response = httpx.request(
-                method, f"{url}{path}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=120.0
-            )
+                method, f"{url}{path}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=180.0,
+                follow_redirects=True,  # Modal answers a slow request with a redirect to its result
+            )  # fmt: skip
             status, text = response.status_code, response.text
         except httpx.TransportError as error:
             status, text = 0, str(error)

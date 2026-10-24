@@ -9,6 +9,7 @@ Pure: entries in, hex digest out. Reading a directory is `snapshot.py`'s.
 """
 
 import hashlib
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -60,8 +61,9 @@ def kept(path: str) -> bool:
 
 
 def tree_digest(entries: Iterable[Entry]) -> str:
-    """The workspace's hash: one line per kept file, sorted by path, of its mode, its content's
-    hash and its path, hashed together. Order of `entries` does not matter.
+    """The workspace's hash: one JSON line per kept file, sorted by path, of its mode, its
+    content's hash and its path, hashed together. JSON keeps it one-to-one: no path, whatever
+    characters it holds, can stand for two files. Order of `entries` does not matter.
 
     >>> a = Entry("a.py", False, b"x")
     >>> b = Entry("b.sh", True, b"y")
@@ -69,7 +71,7 @@ def tree_digest(entries: Iterable[Entry]) -> str:
     True
     """
     lines = sorted(
-        f"{'755' if entry.executable else '644'} {digest(entry.content)} {entry.path}"
+        json.dumps([entry.path, 755 if entry.executable else 644, digest(entry.content)])
         for entry in entries
         if kept(entry.path)
     )

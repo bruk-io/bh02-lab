@@ -1,11 +1,12 @@
 """The CLI against the real gate API on a real socket, with the battery runner faked at the
 boundary: what the lab lead sees, and what the gate refuses."""
 
+import contextlib
 import json
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from typing import Any
 
 import httpx
@@ -31,11 +32,8 @@ class FakeRunner:
         self.jobs[job_id] = {"status": "done", "score": 0.5, "band": [0.4, 0.6], "k": k}
 
 
-@pytest.fixture
-def gate() -> Iterator[tuple[str, FakeRunner]]:
-    jobs: dict[str, Any] = {}
-    runner = FakeRunner(jobs)
-    api = build_api(jobs, runner, lambda battery: {"model": "srv-1", "battery": battery}, TOKEN)
+@contextlib.contextmanager
+def _served(api: Any) -> Generator[str]:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -44,9 +42,19 @@ def gate() -> Iterator[tuple[str, FakeRunner]]:
     thread.start()
     while not server.started:
         time.sleep(0.01)
-    yield f"http://127.0.0.1:{port}", runner
-    server.should_exit = True
-    thread.join(5)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(5)
+
+
+@pytest.fixture
+def gate() -> Iterator[tuple[str, FakeRunner]]:
+    jobs: dict[str, Any] = {}
+    runner = FakeRunner(jobs)
+    with _served(build_api(jobs, runner, lambda battery: {"model": "srv-1", "battery": battery}, TOKEN)) as url:
+        yield url, runner
 
 
 def _cli(url: str, *args: str, token: str = TOKEN) -> Any:
@@ -90,3 +98,23 @@ def test_a_bad_ask_is_refused_with_why(gate: tuple[str, FakeRunner]) -> None:
 def test_the_cli_says_what_to_set_without_a_gate() -> None:
     result = CliRunner().invoke(main, ["pins"], env={"BH02_LAB_GATE_URL": "", "BH02_LAB_TOKEN": ""})
     assert result.exit_code == 1 and "BH02_LAB_GATE_URL" in result.output
+
+
+def test_a_battery_run_that_cannot_start_is_failed_not_queued() -> None:
+    jobs: dict[str, Any] = {}
+
+    def broken(*_: object) -> None:
+        raise RuntimeError("spawn refused")
+
+    with _served(build_api(jobs, broken, lambda b: {}, TOKEN)) as url:
+        answer = httpx.post(f"{url}/batteries", json={}, headers={"Authorization": f"Bearer {TOKEN}"})
+    assert answer.status_code == 502
+    assert [job["status"] for job in jobs.values()] == ["failed"]
+
+
+def test_a_run_that_went_quiet_is_reported_failed() -> None:
+    jobs: dict[str, Any] = {"j1": {"status": "running", "updated_at": 0.0}}
+    api = build_api(jobs, FakeRunner(jobs), lambda b: {}, TOKEN, clock=lambda: 10 * 60 * 60.0)
+    with _served(api) as url:
+        answer = httpx.get(f"{url}/batteries/j1", headers={"Authorization": f"Bearer {TOKEN}"}).json()
+    assert answer["status"] == "failed" and "stopped reporting" in answer["error"]

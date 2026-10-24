@@ -14,13 +14,16 @@ lab lead (Managed Agents, cloud sandbox)
             │         └─ bh-02 ─► serve (vLLM, Ornith, Modal GPU)
             │    stores the workspace, transcript and events by content hash
             └─ judge.verify × each rollout
-                 └─ Modal Sandbox  Python + pytest + the hidden checks; no network, no secret
-                 one verdict per snapshot, task and judge pin, in the judge's own store
+                 └─ Modal Sandbox  the snapshot and each case's steps, never the expected values;
+                                   no network, no secret; reports what each step did
+                 compares outside the sandbox; one verdict per snapshot, task and judge pin
 ```
 
 - **Pinned, not claimed.** A rollout records the rollout image's Modal id, the genome's plugin hashes, the serving hash of every pin that decides the model's answers, and the judge's own pin. `pins.toml` holds the pins.
 - **bh-02 is not changed.** `headless/` is a cordis row that takes the place of bh-02's terminal app through `--patch`: it sends the task, records what bh-02 shows and asks, and ends the session.
 - **Transcripts are training data, never evidence.** Only the judge's verdicts on the snapshot count.
+- **The judge's answers never enter a sandbox.** A task's hidden checks are data (`check/cases.json`: steps and the value each must give). The check sandbox runs the steps against the workspace and reports what happened; the comparison happens outside it. Code in the workspace can return or print anything, but it passes only by giving the right answers.
+- **The lab's failures are not the model's.** A sandbox that didn't finish, a snapshot missing from the store or a judge that didn't run is reported as an error and left out of the score; the run is marked incomplete.
 
 ## Layout
 
@@ -29,8 +32,9 @@ lab lead (Managed Agents, cloud sandbox)
 | `src/bh02_lab/` | the pure core (`contract`, `hashing`, `snapshot`, `stats`, `pins`, `battery`, `gate_core`, `proof`), the gate API, the CLI |
 | `src/bh02_lab/modal_apps/` | the Modal apps: `serve`, `rollout`, `judge`, `gate`, `train_proof` |
 | `src/bh02_lab/sandbox/entry.py` | the program the rollout sandbox runs; standard library only |
+| `src/bh02_lab/sandbox/cases.py` | the program the judge's check sandbox runs; standard library only |
 | `headless/` | the headless ui row, installed into bh-02's own environment |
-| `battery/core/` | six tasks: `prompt.md`, `repo/`, hidden `check/`, `reference/` |
+| `battery/core/` | six tasks: `prompt.md`, `repo/`, hidden `check/cases.json`, `reference/` |
 | `agents/` | the lab lead on Managed Agents; `scripts/apply-agents` applies it |
 | `backlog/` | the board: Phase 0's intent and its tasks |
 
@@ -50,5 +54,12 @@ What needs your credentials, in order. Nothing below has run against Modal or Ma
 3. **Serving**: `modal deploy -m bh02_lab.modal_apps.serve`, then check `curl -H "Authorization: Bearer $ORNITH_KEY" <url>/v1/models` lists `Ornith-1.5-9B` and the same request without the key is refused.
 4. **Jail spike** (TASK-0001.04): `modal deploy -m bh02_lab.modal_apps.rollout`, then `modal run -m bh02_lab.modal_apps.rollout::probe_jail`. If the jail line says `jailed`, keep `rollout.jail = "bh-02"`; if bh-02 failed to start its jail, set it to `"sandbox"` (or try the `vm` runtime) and say which in the task.
 5. **Judge and gate**: `modal deploy -m bh02_lab.modal_apps.judge` and `modal deploy -m bh02_lab.modal_apps.gate`. Then `export BH02_LAB_GATE_URL=<gate url> BH02_LAB_TOKEN=<gate token>` and `uv run bh02-lab pins`.
-6. **One battery by hand**: `uv run bh02-lab battery run --k 1`. This is the hand-run score the lead's runs are compared with.
+6. **One battery by hand**: `uv run bh02-lab battery run --k 2`. This is the hand-run score the lead's runs are compared with (below two seeds a run has a score but no band).
 7. **The lead**: `ANTHROPIC_API_KEY=... scripts/apply-agents apply`, then `scripts/apply-agents run --k 5`. The environment installs this repository from GitHub, so push first.
+
+## Known gaps
+
+- **`jail = "sandbox"` exposes the inference key** to the model's code while bh-02 runs: with no jail inside the sandbox, it can read bh-02's `local.env`. The key only buys inference on the lab's endpoint; rotate it after such runs, or put a proxy in front of the server. With bh-02's own jail (the default), the jail keeps it out of reach (`tests/e2e/test_sandbox_entry.py` proves that locally).
+- **The hidden checks and references are in this repository.** Anything that can read it (the lead's environment installs it from GitHub) can read them. Phase 0 doesn't let the lead write anything a rollout sees; before a later phase does, the checks move to a store only the judge reads.
+- **Nothing uploads a genome's plugins yet.** The runner reads them from the artefacts volume by hash; Phase 1 adds the way in.
+- **Replicates differ only by sampling.** bh-02's OpenAI provider sends no seed, so `seed` is a replicate's index, not a sampling seed.

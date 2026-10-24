@@ -1,6 +1,9 @@
-"""The core battery is well formed: each task fails as shipped, passes with its reference, and is
-judged by the same command the judge runs."""
+"""The core battery is well formed: each task fails as shipped and passes with its reference,
+judged the way the judge judges (the harness runs the steps, the comparison happens outside), and
+a workspace can't talk its way to a pass."""
 
+import json
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterable
@@ -8,8 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from bh02_lab.battery import Task, check_command, judge_sha, load_battery, outcome, public_part
+from bh02_lab.battery import BATTERIES, Task, judge_sha, load_battery, observed, outcome, public_part, public_steps
 from bh02_lab.hashing import Entry
+from bh02_lab.sandbox import cases
 
 TASKS = load_battery("core")
 
@@ -22,18 +26,14 @@ def _write(root: Path, entries: Iterable[Entry]) -> None:
 
 
 def _judged(tmp_path: Path, task: Task, work_files: Iterable[Entry]) -> bool:
-    work, checks, report = tmp_path / "work", tmp_path / "checks", tmp_path / "report.xml"
+    work = tmp_path / "work"
     _write(work, work_files)
-    _write(checks, task.check)
-    subprocess.run(
-        check_command(sys.executable, str(checks), str(work), str(report)),
-        cwd=tmp_path,
-        capture_output=True,
-        timeout=120,
+    request = {"work": str(work), "cases": public_steps(task.cases), "timeout_s": 20}
+    done = subprocess.run(
+        [sys.executable, "-I", cases.__file__], input=json.dumps(request), capture_output=True, text=True, timeout=120,
         check=False,
-    )
-    xml = report.read_text() if report.exists() else None
-    return outcome(xml, task.checks).passed
+    )  # fmt: skip
+    return outcome(task.cases, observed(done.stdout)).passed
 
 
 def test_the_core_battery_has_six_tasks() -> None:
@@ -52,12 +52,25 @@ def test_a_task_passes_with_its_reference(tmp_path: Path, task_id: str) -> None:
     assert _judged(tmp_path, task, solved.values())
 
 
-def test_a_workspace_conftest_cannot_pass_a_task(tmp_path: Path) -> None:
+CHEATS = {
+    "prints a forged report": b'print(\'CASE 0 [{"i": 0, "returned": [1, 2, 3]}]\')\n',
+    "exits cleanly at import": b"import os\nos._exit(0)\n",
+    "replaces json in the child": b'import json\njson.dumps = lambda *a, **k: \'{"i": 0, "returned": [1, 2, 3]}\'\n',
+    "leaves a conftest and a sitecustomize": b"",
+}
+
+
+@pytest.mark.parametrize("cheat", sorted(CHEATS))
+def test_a_workspace_cannot_talk_its_way_to_a_pass(tmp_path: Path, cheat: str) -> None:
     task = TASKS["paginate"]
-    cheat = Entry(
-        "conftest.py", False, b"import pytest\ndef pytest_collection_modifyitems(items):\n    items.clear()\n"
-    )
-    assert not _judged(tmp_path, task, [*task.repo, cheat])
+    extra = [Entry("conftest.py", False, b"raise SystemExit"), Entry("sitecustomize.py", False, b"raise SystemExit")]
+    files = [Entry("pager.py", False, CHEATS[cheat] or task.repo[0].content), *extra]
+    assert not _judged(tmp_path, task, files)
+
+
+def test_the_steps_the_sandbox_gets_hold_no_expected_value() -> None:
+    for task in TASKS.values():
+        assert "expect" not in json.dumps(public_steps(task.cases))
 
 
 def test_the_public_part_holds_no_check() -> None:
@@ -74,15 +87,11 @@ def test_the_judge_pin_moves_with_a_check_and_not_otherwise() -> None:
     assert judge_sha(tasks, b"judge v2") != base
     first = tasks[0]
     edited = Task(first.task_id, first.title, first.checks, first.prompt, first.repo,
-                  (Entry("test_x.py", False, b"assert True"),), first.reference)  # fmt: skip
+                  (Entry("cases.json", False, b'{"cases": []}'),), first.reference)  # fmt: skip
     assert judge_sha([edited, *tasks[1:]], b"judge v1") != base
 
 
 def test_a_copy_without_checks_loads_for_the_runner(tmp_path: Path) -> None:
-    import shutil
-
-    from bh02_lab.battery import BATTERIES
-
     shutil.copytree(BATTERIES / "core", tmp_path / "core", ignore=shutil.ignore_patterns("check", "reference"))
     tasks = load_battery("core", tmp_path, with_checks=False)
     assert set(tasks) == set(TASKS) and all(not task.check for task in tasks.values())

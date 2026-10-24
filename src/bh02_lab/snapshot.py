@@ -22,18 +22,19 @@ from bh02_lab.hashing import Entry, kept
 __all__ = ["SnapshotError", "entries_of", "packed", "read_tree"]
 
 MAX_BYTES = 64 * 1024 * 1024
+MAX_FILES = 5000
 
 
 class SnapshotError(ValueError):
     """A workspace that can't be taken as a snapshot, and why."""
 
 
-def entries_of(tar_bytes: bytes, max_bytes: int = MAX_BYTES) -> list[Entry]:
+def entries_of(tar_bytes: bytes, max_bytes: int = MAX_BYTES, max_files: int = MAX_FILES) -> list[Entry]:
     """The kept files of a tar, in its order.
 
     Raises:
         SnapshotError: The tar can't be read, names a path outside the workspace, or is over
-            `max_bytes` unpacked.
+            `max_bytes` unpacked or `max_files` files.
     """
     entries: list[Entry] = []
     total = 0
@@ -46,6 +47,8 @@ def entries_of(tar_bytes: bytes, max_bytes: int = MAX_BYTES) -> list[Entry]:
                 if not kept(path):
                     continue
                 total += member.size
+                if len(entries) >= max_files:
+                    raise SnapshotError(f"the workspace has over {max_files} files")
                 if total > max_bytes:
                     raise SnapshotError(f"the workspace is over {max_bytes} bytes unpacked")
                 file = archive.extractfile(member)

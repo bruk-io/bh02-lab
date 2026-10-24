@@ -9,15 +9,17 @@ imports or runs a plugin.
 Deploy: `modal deploy -m bh02_lab.modal_apps.gate`; the URL it prints is `BH02_LAB_GATE_URL`.
 """
 
+import functools
 import os
+import time
 from typing import Any
 
 import modal
 
-from bh02_lab.battery import load_battery
+from bh02_lab.battery import task_ids
 from bh02_lab.contract import Rollout, Verdict
 from bh02_lab.gate_core import BatteryAsk, requests_for, summary
-from bh02_lab.modal_apps.common import APPS, BATTERY_JOBS, GATE_SECRET, LAB_ROOT, lab_image, pins, repo_root
+from bh02_lab.modal_apps.common import APPS, BATTERY_JOBS, GATE_SECRET, lab_image, pins, repo_root
 from bh02_lab.pins import serving_hash
 
 __all__ = ["app", "run_battery", "web"]
@@ -26,9 +28,7 @@ _PINS = pins()
 
 app = modal.App(APPS["gate"])
 jobs = modal.Dict.from_name(BATTERY_JOBS, create_if_missing=True)
-image = lab_image("fastapi[standard]>=0.115").add_local_dir(
-    repo_root() / "battery", str(LAB_ROOT / "battery"), ignore=["**/check/**", "**/reference/**", "**/repo/**"]
-)
+image = lab_image("fastapi[standard]>=0.115", ship={"battery": ["**/check/**", "**/reference/**", "**/repo/**"]})
 
 
 def _pins_now(battery: str) -> dict[str, str]:
@@ -66,11 +66,13 @@ def _verdicts(rollouts: list[Rollout | BaseException], battery: str) -> list[Ver
 def run_battery(job_id: str, genome: list[str], k: int, battery: str) -> None:
     """Run every task of the battery k times on the genome, judge each, and keep the summary."""
     ask = BatteryAsk(frozenset(genome), k, battery)
-    jobs[job_id] = {"status": "running", "ask": {"genome": sorted(genome), "k": k, "battery": battery}}
+    asked = {"genome": sorted(genome), "k": k, "battery": battery}
+    jobs[job_id] = {"status": "running", "ask": asked, "updated_at": time.time()}
     try:
         pinned = _pins_now(battery)
-        tasks = load_battery(battery, LAB_ROOT / "battery", with_checks=False)
-        requests = requests_for(ask, list(tasks), pinned["image_digest"], pinned["model"])
+        requests = requests_for(
+            ask, task_ids(battery, repo_root() / "battery"), pinned["image_digest"], pinned["model"]
+        )
         run = modal.Function.from_name(APPS["rollout"], "run")
         outcomes = run.map(
             [r.to_json() for r in requests], kwargs={"battery": battery},
@@ -78,9 +80,9 @@ def run_battery(job_id: str, genome: list[str], k: int, battery: str) -> None:
         )  # fmt: skip
         rollouts = [o if isinstance(o, BaseException) else Rollout.from_json(o) for o in outcomes]
         verdicts = _verdicts(rollouts, battery)
-        jobs[job_id] = {"status": "done", **summary(ask, requests, verdicts, pinned)}
+        jobs[job_id] = {"status": "done", "updated_at": time.time(), **summary(ask, requests, verdicts, pinned)}
     except Exception as error:
-        jobs[job_id] = {"status": "failed", "error": f"{type(error).__name__}: {error}"}
+        jobs[job_id] = {"status": "failed", "updated_at": time.time(), "error": f"{type(error).__name__}: {error}"}
         raise
 
 
@@ -94,4 +96,5 @@ def web() -> Any:
         run_battery.spawn(job_id, genome, k, battery)
 
     store: Any = jobs  # a modal.Dict is a mapping by its methods, not by its type
-    return build_api(store, start, _pins_now, os.environ["GATE_TOKEN"])
+    cached_pins = functools.lru_cache(maxsize=8)(_pins_now)  # building the image digest is slow the first time
+    return build_api(store, start, cached_pins, os.environ["GATE_TOKEN"])

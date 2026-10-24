@@ -91,9 +91,11 @@ def summary(
     }
     if results:
         band = noise_band(results, random.Random(BAND_SEED))
+        seeds = [sum(1 for (t, _) in results if t == task) for task in {t for t, _ in results}]
         report |= {
             "score": band.estimate,
-            "band": [band.low, band.high],
+            # resampling one seed per task can't show noise: below two seeds there is no band
+            "band": [band.low, band.high] if min(seeds) >= 2 else None,
             "tasks": {
                 task: sum(passed for (t, _), passed in results.items() if t == task)
                 / sum(1 for (t, _) in results if t == task)

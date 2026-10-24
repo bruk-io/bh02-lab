@@ -1,0 +1,105 @@
+{
+ "cases": [
+  {
+   "name": "plain output is unchanged",
+   "steps": [
+    {
+     "write": "notes.txt",
+     "text": "one two\nthree\n"
+    },
+    {
+     "call": "wc_tool:main",
+     "args": [
+      [
+       "notes.txt"
+      ]
+     ],
+     "capture_stdout": true,
+     "expect": {
+      "returns": 0,
+      "stdout": "2 3 notes.txt\n"
+     }
+    }
+   ]
+  },
+  {
+   "name": "json output",
+   "steps": [
+    {
+     "write": "notes.txt",
+     "text": "one two\nthree\n"
+    },
+    {
+     "call": "wc_tool:main",
+     "args": [
+      [
+       "--json",
+       "notes.txt"
+      ]
+     ],
+     "capture_stdout": true,
+     "expect": {
+      "returns": 0,
+      "stdout_json": {
+       "path": "notes.txt",
+       "lines": 2,
+       "words": 3
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "json flag after the path",
+   "steps": [
+    {
+     "write": "notes.txt",
+     "text": "one two\nthree\n"
+    },
+    {
+     "call": "wc_tool:main",
+     "args": [
+      [
+       "notes.txt",
+       "--json"
+      ]
+     ],
+     "capture_stdout": true,
+     "expect": {
+      "stdout_json": {
+       "path": "notes.txt",
+       "lines": 2,
+       "words": 3
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "json counts on a larger file",
+   "steps": [
+    {
+     "write": "big.txt",
+     "text": "a b c\na b c\na b c\na b c\na b c\na b c\na b c\n"
+    },
+    {
+     "call": "wc_tool:main",
+     "args": [
+      [
+       "--json",
+       "big.txt"
+      ]
+     ],
+     "capture_stdout": true,
+     "expect": {
+      "stdout_json": {
+       "path": "big.txt",
+       "lines": 7,
+       "words": 21
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -60,10 +60,13 @@ class RolloutRequest:
 
 @dataclass(frozen=True, slots=True)
 class Rollout:
-    """A finished rollout: its request, and the content hashes of the workspace it left and of
-    bh-02's transcript. `ended` is how the headless run ended (`replied`, `budget`, `crashed`)."""
+    """A finished rollout: its request, its own id (what its event log and bh-02's log are kept
+    under), and the content hashes of the workspace it left and of bh-02's transcript. `ended` is
+    how it ended: `replied` or `budget` (the headless row's own end), `crashed`, or `oversized`
+    (a workspace over the snapshot's limits)."""
 
     request: RolloutRequest
+    run_id: str
     snapshot: str
     transcript: str
     ended: str
@@ -71,6 +74,7 @@ class Rollout:
     def to_json(self) -> dict[str, Any]:
         return {
             "request": self.request.to_json(),
+            "run_id": self.run_id,
             "snapshot": self.snapshot,
             "transcript": self.transcript,
             "ended": self.ended,
@@ -88,6 +92,7 @@ class Rollout:
             raise ContractError("rollout.request must be an object")
         return cls(
             request=RolloutRequest.from_json(request),
+            run_id=_text(data, "run_id"),
             snapshot=_text(data, "snapshot"),
             transcript=_text(data, "transcript"),
             ended=_text(data, "ended"),

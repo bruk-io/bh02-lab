@@ -14,6 +14,7 @@ Spike (TASK-0001.04): `modal run -m bh02_lab.modal_apps.rollout::probe_jail`.
 """
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -23,16 +24,20 @@ import modal
 from bh02_lab.battery import load_battery
 from bh02_lab.contract import Rollout, RolloutRequest
 from bh02_lab.hashing import digest, tree_digest
-from bh02_lab.modal_apps.common import APPS, ARTEFACTS, INFERENCE_SECRET, LAB_ROOT, lab_image, pins, repo_root
+from bh02_lab.modal_apps.common import APPS, ARTEFACTS, INFERENCE_SECRET, lab_image, pins, repo_root
 from bh02_lab.pins import Pins, serving_hash
-from bh02_lab.snapshot import SnapshotError, entries_of, packed
+from bh02_lab.rollout_core import LabError, settled
+from bh02_lab.snapshot import packed
 
 __all__ = ["app", "image_digest", "probe_jail", "run", "sandbox_request"]
 
 _PINS = pins()
 _HEADLESS = "/opt/headless"
 _ENTRY = "/opt/lab/entry.py"
+_ENTRY_SOURCE = "src/bh02_lab/sandbox/entry.py"
+_LEFT_OUT = ["tests", "tests/**", "**/__pycache__/**", "**/.pytest_cache/**", "**/*.egg-info/**"]
 _SANDBOX_GRACE_S = 600
+_OUTPUTS = ("result.json", "work.tar", "transcript.jsonl", "events.jsonl", "bh02.log")
 
 app = modal.App(APPS["rollout"])
 artefacts = modal.Volume.from_name(ARTEFACTS, create_if_missing=True)
@@ -50,17 +55,17 @@ def _rollout_image(pinned: Pins) -> modal.Image:
             f"cd /opt/bh-02 && uv python install {bh02.python}",
             "cd /opt/bh-02 && uv sync --all-packages --frozen --no-dev",
         )
-        .add_local_dir(repo_root() / "headless", _HEADLESS, copy=True, ignore=["tests", "**/__pycache__"])
+        .add_local_dir(repo_root() / "headless", _HEADLESS, copy=True, ignore=_LEFT_OUT)
         .run_commands(f"uv pip install --python /opt/bh-02/.venv/bin/python --no-deps {_HEADLESS}")
-        .add_local_file(repo_root() / "src" / "bh02_lab" / "sandbox" / "entry.py", _ENTRY, copy=True)
+        .add_local_file(repo_root() / _ENTRY_SOURCE, _ENTRY, copy=True)
         .run_commands("mkdir -p /work /lab")
     )
 
 
+# The rollout image is defined from repository files; the runner carries them, so the image defined
+# again in its containers (where the sandboxes start) reads the same files.
+runner_image = lab_image(ship={"battery": ["**/check/**", "**/reference/**"], "headless": _LEFT_OUT, _ENTRY_SOURCE: []})
 rollout_image = _rollout_image(_PINS)
-runner_image = lab_image().add_local_dir(
-    repo_root() / "battery", str(LAB_ROOT / "battery"), ignore=["**/check/**", "**/reference/**"]
-)
 
 
 def sandbox_request(
@@ -100,6 +105,8 @@ def _plugins(genome: frozenset[str]) -> list[dict[str, str]]:
         ValueError: A stored plugin does not hash to its name.
     """
     found = []
+    if genome:
+        artefacts.reload()  # a warm container sees plugins stored since it started
     for plugin_hash in sorted(genome):
         source = Path(f"/artefacts/genome/{plugin_hash}.py").read_bytes()
         if digest(source) != plugin_hash:
@@ -111,15 +118,16 @@ def _plugins(genome: frozenset[str]) -> list[dict[str, str]]:
 
 
 def _sandbox_run(
-    payload: dict[str, Any], repo: list[tuple[str, bytes, bool]], allow: list[str] | None
-) -> dict[str, bytes]:
-    """Start a fresh sandbox, run the task, read its outputs back, and end it. `allow`: the only
-    domains the sandbox may reach (None: no limit, for the probe alone)."""
+    payload: dict[str, Any], repo: list[tuple[str, bytes, bool]], allow: list[str] | None, key: str
+) -> tuple[int | None, dict[str, bytes | None]]:
+    """Start a fresh sandbox, run the task, read its outputs back, and end it: the program's exit
+    code and each output (None when it isn't there). `allow`: the only domains the sandbox may
+    reach (None: no limit, for the probe alone). The key goes in as a file the program removes,
+    never as a secret or an environment variable of the sandbox."""
     sandbox = modal.Sandbox.create(
         "sleep", "infinity",
         app=app,
         image=rollout_image,
-        secrets=[modal.Secret.from_name(INFERENCE_SECRET)],
         timeout=int(payload["budget_s"]) + _SANDBOX_GRACE_S,
         cpu=2.0,
         memory=4096,
@@ -135,68 +143,87 @@ def _sandbox_run(
                 sandbox.exec("chmod", "+x", f"/work/{path}").wait()
         files.make_directory("/lab", create_parents=True)
         files.write_text(json.dumps(payload), "/lab/request.json")
-        sandbox.exec("python3", _ENTRY, timeout=int(payload["budget_s"]) + _SANDBOX_GRACE_S - 60).wait()
-        outputs = {}
-        for name in ("result.json", "work.tar", "transcript.jsonl", "events.jsonl", "bh02.log"):
+        files.write_text(key, "/lab/key")
+        process = sandbox.exec(
+            "python3", _ENTRY, "--key-file", "/lab/key", "--stop-strays",
+            timeout=int(payload["budget_s"]) + _SANDBOX_GRACE_S - 60,
+        )  # fmt: skip
+        process.wait()
+        outputs: dict[str, bytes | None] = {}
+        for name in _OUTPUTS:
             try:
                 outputs[name] = files.read_bytes(f"/lab/out/{name}")
-            except Exception:  # a missing output is kept as missing, whatever the sandbox did
-                outputs[name] = b""
-        return outputs
+            except Exception:  # an output that isn't there; whether that matters is `settled`'s call
+                outputs[name] = None
+        return process.returncode, outputs
     finally:
         sandbox.terminate()
 
 
-@app.function(image=runner_image, volumes={"/artefacts": artefacts}, timeout=2 * 60 * 60, max_containers=32)
+@app.function(
+    image=runner_image,
+    volumes={"/artefacts": artefacts},
+    secrets=[modal.Secret.from_name(INFERENCE_SECRET)],
+    timeout=2 * 60 * 60,
+    max_containers=32,
+)
 def run(request_json: dict[str, Any], battery: str = "core") -> dict[str, Any]:
     """Run one rollout of a task of `battery` and store what it left; returns the `Rollout` as JSON.
 
     Raises:
         ValueError: The request names another image or model than the pinned ones, or a task the
             battery does not have.
-    """
+        LabError: The sandbox's program did not finish (the lab's failure, not the model's).
+    """  # ruff: ignore[docstring-extraneous-exception] - _stored raises it
+    import os
+
     request = RolloutRequest.from_json(request_json)
     built = _digest()
     if request.image_digest != built:
         raise ValueError(f"the request names image {request.image_digest}, but the pinned image is {built}")
     if request.model != serving_hash(_PINS):
         raise ValueError(f"the request names model {request.model}, but the pinned model is {serving_hash(_PINS)}")
-    tasks = load_battery(battery, LAB_ROOT / "battery", with_checks=False)
+    tasks = load_battery(battery, repo_root() / "battery", with_checks=False)
     task = tasks.get(request.task_id)
     if task is None:
         raise ValueError(f"battery {battery!r} has no task {request.task_id!r}")
     base_url = _base_url()
     payload = sandbox_request(request, task.prompt, base_url, _plugins(request.genome), _PINS)
     repo = [(e.path, e.content, e.executable) for e in task.repo]
-    outputs = _sandbox_run(payload, repo, [urlparse(base_url).hostname or ""])
-    return _stored(request, outputs).to_json()
+    code, outputs = _sandbox_run(payload, repo, [urlparse(base_url).hostname or ""], os.environ["ORNITH_KEY"])
+    return _stored(request, code, outputs).to_json()
 
 
-def _stored(request: RolloutRequest, outputs: dict[str, bytes]) -> Rollout:
-    """Hash and store the outputs on the trusted side; the sandbox's own claims are not read but
-    for how it ended, and a workspace that can't be read is stored as an empty one."""
-    try:
-        result = json.loads(outputs["result.json"] or b"{}")
-        ended = str(result.get("ended", "crashed"))
-    except ValueError:
-        ended = "crashed"
-    try:
-        entries = entries_of(outputs["work.tar"])
-    except SnapshotError as error:
-        entries, ended = [], f"unreadable: {error}"
-    snapshot = tree_digest(entries)
-    transcript = digest(outputs["transcript.jsonl"])
+def _stored(request: RolloutRequest, code: int | None, outputs: dict[str, bytes | None]) -> Rollout:
+    """Decide what the rollout was (`settled`), then hash and store its outputs under its own id.
+    The event log and bh-02's log are kept even when the lab failed, for finding out why.
+
+    Raises:
+        LabError: The sandbox's program did not finish.
+    """
+    run_id = uuid.uuid4().hex
     root = Path("/artefacts")
+    for folder, name in (("events", "events.jsonl"), ("logs", "bh02.log")):
+        path = root / folder / f"{run_id}.{Path(name).suffix.lstrip('.')}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(outputs.get(name) or b"")
+    artefacts.commit()
+    try:
+        entries, ended = settled(code, outputs.get("result.json"), outputs.get("work.tar"))
+    except LabError as error:
+        error.add_note(f"rollout {run_id}: its event log and bh-02's log are in {ARTEFACTS}")
+        raise
+    snapshot = tree_digest(entries)
+    transcript_bytes = outputs.get("transcript.jsonl") or b""
+    transcript = digest(transcript_bytes)
     for path, content in (
         (root / "snapshots" / f"{snapshot}.tar", packed(entries)),
-        (root / "transcripts" / f"{transcript}.jsonl", outputs["transcript.jsonl"]),
-        (root / "events" / f"{snapshot}.{request.task_id}.{request.seed}.jsonl", outputs["events.jsonl"]),
-        (root / "logs" / f"{snapshot}.{request.task_id}.{request.seed}.log", outputs["bh02.log"]),
+        (root / "transcripts" / f"{transcript}.jsonl", transcript_bytes),
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
     artefacts.commit()
-    return Rollout(request, snapshot, transcript, ended)
+    return Rollout(request, run_id, snapshot, transcript, ended)
 
 
 @app.function(image=runner_image, timeout=30 * 60)
@@ -217,11 +244,12 @@ def probe_jail() -> dict[str, Any]:
         "jail": "bh-02",
         "plugins": [],
     }
-    outputs = _sandbox_run(payload, [], None)
-    jail = [line for line in outputs["events.jsonl"].decode(errors="replace").splitlines() if '"field": "jail"' in line]
+    code, outputs = _sandbox_run(payload, [], None, key="")
+    text = {name: (outputs.get(name) or b"").decode(errors="replace") for name in _OUTPUTS if name != "work.tar"}
     return {
-        "result": outputs["result.json"].decode(errors="replace"),
-        "jail": jail,
-        "events": outputs["events.jsonl"].decode(errors="replace")[-4000:],
-        "log": outputs["bh02.log"].decode(errors="replace")[-4000:],
+        "exit_code": code,
+        "result": text["result.json"],
+        "jail": [line for line in text["events.jsonl"].splitlines() if '"field": "jail"' in line],
+        "events": text["events.jsonl"][-4000:],
+        "log": text["bh02.log"][-4000:],
     }

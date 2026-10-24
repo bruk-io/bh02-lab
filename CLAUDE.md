@@ -18,7 +18,8 @@ uv run bh02-lab --help                                   # the lab lead's CLI
 - **Hidden checks never reach a rollout**: the runner's and gate's images copy `battery/` without `check/` and `reference/`; only the judge's images hold `check/`.
 - **Credentials stay where they belong**: the inference key in the serving app and the rollout sandbox (bh-02's `local.env`, which its jail keeps from the model's code); the gate token in the gate and in the lead's vault; Modal's and Anthropic's own credentials nowhere in a sandbox or the lead's environment.
 - **A rollout is pinned by what was built, not what it says**: the runner refuses a request whose image digest or serving hash is not the pinned one, and hashes and re-packs the workspace itself.
-- **Never weaken the verdict rule** (`battery.outcome`): exactly the task's number of checks, all passed, none skipped.
+- **Expected values never enter a sandbox**: the check sandbox gets `battery.public_steps` (no `expect`), and `battery.outcome` compares outside it. Never weaken that rule: every step with an expected value observed and matching, every case.
+- **The lab's failures raise, the model's are verdicts**: `rollout_core.settled` and the judge raise for what the lab failed to do, so the gate leaves it out of the score; never turn one into a failing verdict, and never cache a verdict for one.
 
 ## Code
 

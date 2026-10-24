@@ -53,9 +53,26 @@ def test_a_run_leaves_the_workspace_transcript_and_events(tmp_path: Path) -> Non
     assert kinds[-1] == "end" and "confirm" in kinds
 
 
-def test_the_key_file_is_gone_after_the_run(tmp_path: Path) -> None:
-    _run(tmp_path, "print('hi')", "sandbox")
-    assert not (CHECKOUT / "local.env").exists()
+def test_a_local_env_already_there_is_put_back(tmp_path: Path) -> None:
+    local_env = CHECKOUT / "local.env"
+    before = local_env.read_bytes() if local_env.exists() else None
+    local_env.write_text("MINE=1\n")
+    try:
+        _run(tmp_path, "print('hi')", "sandbox")
+        assert local_env.read_text() == "MINE=1\n"
+    finally:
+        if before is None:
+            local_env.unlink()
+        else:
+            local_env.write_bytes(before)
+
+
+def test_caches_and_environments_stay_out_of_the_tar(tmp_path: Path) -> None:
+    out, _ = _run(tmp_path, "import os; os.makedirs('.venv/lib'); open('.venv/lib/x', 'w').write('x')", "sandbox")
+    import tarfile
+
+    with tarfile.open(out / "work.tar") as archive:
+        assert not [name for name in archive.getnames() if ".venv" in name]
 
 
 _STUB = """
@@ -84,10 +101,14 @@ def test_the_key_reaches_the_server_and_not_the_models_code(tmp_path: Path) -> N
     request = {"prompt": steal, "provider": "openai", "base_url": base_url, "model": "m", "budget_s": 60,
                "jail": "bh-02", "plugins": []}  # fmt: skip
     (lab / "request.json").write_text(json.dumps(request))
+    key_file = tmp_path / "key"
+    key_file.write_text(key)
     done = subprocess.run(
-        [sys.executable, entry.__file__, "--lab", str(lab), "--work", str(work), "--bh02", str(CHECKOUT)],
-        capture_output=True, text=True, timeout=180, check=False, env=os.environ | {entry.KEY: key},
+        [sys.executable, entry.__file__, "--lab", str(lab), "--work", str(work), "--bh02", str(CHECKOUT),
+         "--key-file", str(key_file)],
+        capture_output=True, text=True, timeout=180, check=False,
     )  # fmt: skip
+    assert not key_file.exists()
     stub.stdin.close()
     sent = json.loads(stub.stdout.read().strip().splitlines()[-1])
     stub.wait(10)

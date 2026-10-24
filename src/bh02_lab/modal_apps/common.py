@@ -9,6 +9,7 @@ Credentials, by where they may go (the plan's trust boundaries):
   model runs in is given a token or a volume.
 """
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import modal
@@ -40,26 +41,36 @@ BATTERY_JOBS = "bh02-lab-batteries"  # Dict: the gate's battery runs, by id
 INFERENCE_SECRET = "bh02-lab-inference"
 GATE_SECRET = "bh02-lab-gate"
 
-LAB_ROOT = Path("/lab")  # where a lab image keeps pins.toml and the batteries
-_IN_IMAGE_PINS = LAB_ROOT / "pins.toml"
+LAB_ROOT = Path("/lab")
+_SHIPPED = LAB_ROOT / "repo"  # the parts of the repository a lab image carries, at their paths
 
 
 def repo_root() -> Path:
-    """The repository, when this runs from a checkout (deploying); in a container it is not there."""
-    return PINS.parent
+    """The repository: the checkout when deploying, the image's copy of the parts it carries in a
+    container. Image definitions read their local files from here, so a sandbox image defined
+    again inside a container finds the same files and is the same image."""
+    return _SHIPPED if _SHIPPED.is_dir() else PINS.parent
 
 
 def pins() -> Pins:
-    """The pins: the image's copy in a container, the repository's when deploying."""
-    return load(_IN_IMAGE_PINS if _IN_IMAGE_PINS.exists() else PINS)
+    """The pins, from wherever `repo_root` is."""
+    return load(repo_root() / "pins.toml")
 
 
-def lab_image(*extra_packages: str) -> modal.Image:
+def lab_image(*extra_packages: str, ship: Mapping[str, Sequence[str]] | None = None) -> modal.Image:
     """The image trusted lab code runs in: Python 3.13, the lab package, pins.toml, and
-    `extra_packages`. It holds no bh-02."""
-    return (
+    `extra_packages`. `ship` maps more repository paths (files or directories) it carries under
+    `repo_root` to the patterns left out of each. It holds no bh-02."""
+    image = (
         modal.Image.debian_slim(python_version="3.13")
         .uv_pip_install("httpx>=0.27", *extra_packages)
-        .add_local_file(PINS, str(_IN_IMAGE_PINS))
+        .add_local_file(repo_root() / "pins.toml", str(_SHIPPED / "pins.toml"))
         .add_local_python_source("bh02_lab")
     )
+    for path, leave_out in (ship or {}).items():
+        source = repo_root() / path
+        if source.is_dir():
+            image = image.add_local_dir(source, str(_SHIPPED / path), ignore=["**/__pycache__/**", *leave_out])
+        else:
+            image = image.add_local_file(source, str(_SHIPPED / path))
+    return image
