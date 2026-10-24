@@ -1,0 +1,2 @@
+title = "Add a --json flag to the word-count tool"
+checks = 4

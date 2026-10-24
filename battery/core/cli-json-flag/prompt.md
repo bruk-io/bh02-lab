@@ -1,0 +1,1 @@
+`wc_tool.py` prints `LINES WORDS PATH` for a file. Add a `--json` flag: with it, `main` prints one JSON object `{"path": ..., "lines": ..., "words": ...}` instead (lines and words as integers). Without the flag, the output must not change. The repository is the current directory.

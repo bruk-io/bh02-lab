@@ -1,0 +1,1 @@
+`total_by_category` in `report.py` gives wrong totals, and sometimes crashes, when a description in the CSV contains a comma inside quotes, like `"Lunch, team"`. Fix it so any valid CSV with the header `date,description,category,amount` is totalled correctly. Blank lines should be ignored. The repository is the current directory.

@@ -1,0 +1,1 @@
+In `calendar_utils.py`, back-to-back meetings (one ends at 10:00, the next starts at 10:00) are reported as clashing, and `merge` gives wrong answers when its input isn't sorted. Intervals are half-open: a meeting from 9 to 10 does not include 10. Fix both functions. The repository is the current directory.
