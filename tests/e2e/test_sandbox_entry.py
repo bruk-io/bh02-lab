@@ -45,7 +45,7 @@ def _run(tmp_path: Path, prompt: str, jail: str) -> tuple[Path, dict[str, object
 
 def test_a_run_leaves_the_workspace_transcript_and_events(tmp_path: Path) -> None:
     out, result = _run(tmp_path, "open('answer.txt', 'w').write('42')", "sandbox")
-    assert result == {"exit_code": 0, "ended": "replied"}, (out / "bh02.log").read_text()
+    assert (result["exit_code"], result["ended"]) == (0, "replied"), (out / "bh02.log").read_text()
     files = {e.path: e.content for e in entries_of((out / "work.tar").read_bytes())}
     assert files["answer.txt"] == b"42" and "pager.py" in files
     assert (out / "transcript.jsonl").read_text().strip()
@@ -65,6 +65,17 @@ def test_a_local_env_already_there_is_put_back(tmp_path: Path) -> None:
             local_env.unlink()
         else:
             local_env.write_bytes(before)
+
+
+def test_nothing_the_model_started_outlives_bh02_unjailed(tmp_path: Path) -> None:
+    late = "import subprocess; subprocess.Popen(['sh', '-c', 'sleep 3; echo late > late.txt'], start_new_session=True)"
+    _, result = _run(tmp_path, late, "sandbox")
+    if not result["isolated"]:
+        pytest.skip("unshare can't make a PID namespace here")
+    import time
+
+    time.sleep(5)
+    assert not (tmp_path / "work" / "late.txt").exists()
 
 
 def test_caches_and_environments_stay_out_of_the_tar(tmp_path: Path) -> None:

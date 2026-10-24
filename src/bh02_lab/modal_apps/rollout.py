@@ -13,8 +13,10 @@ Deploy: `modal deploy -m bh02_lab.modal_apps.rollout`.
 Spike (TASK-0001.04): `modal run -m bh02_lab.modal_apps.rollout::probe_jail`.
 """
 
+import functools
 import json
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -26,8 +28,8 @@ from bh02_lab.contract import Rollout, RolloutRequest
 from bh02_lab.hashing import digest, tree_digest
 from bh02_lab.modal_apps.common import APPS, ARTEFACTS, INFERENCE_SECRET, lab_image, pins, repo_root
 from bh02_lab.pins import Pins, serving_hash
-from bh02_lab.rollout_core import LabError, settled
-from bh02_lab.snapshot import packed
+from bh02_lab.rollout_core import LabError, lab_failure, settled
+from bh02_lab.snapshot import MAX_BYTES, packed
 
 __all__ = ["app", "image_digest", "probe_jail", "run", "sandbox_request"]
 
@@ -117,22 +119,33 @@ def _plugins(genome: frozenset[str]) -> list[dict[str, str]]:
     return found
 
 
+def _serving(base_url: str, key: str) -> bool:
+    """Whether the serving endpoint answers with the key (it may be scaling up: give it time)."""
+    import httpx
+
+    try:
+        answer = httpx.get(f"{base_url}/models", headers={"Authorization": f"Bearer {key}"}, timeout=20 * 60.0)
+    except httpx.HTTPError:
+        return False
+    return answer.status_code == 200
+
+
 def _sandbox_run(
-    payload: dict[str, Any], repo: list[tuple[str, bytes, bool]], allow: list[str] | None, key: str
-) -> tuple[int | None, dict[str, bytes | None]]:
-    """Start a fresh sandbox, run the task, read its outputs back, and end it: the program's exit
-    code and each output (None when it isn't there). `allow`: the only domains the sandbox may
-    reach (None: no limit, for the probe alone). The key goes in as a file the program removes,
-    never as a secret or an environment variable of the sandbox."""
+    payload: dict[str, Any],
+    repo: list[tuple[str, bytes, bool]],
+    allow: list[str] | None,
+    key: str,
+    serving: Callable[[], bool],
+) -> tuple[str | None, dict[str, bytes | None], bool]:
+    """Start a fresh sandbox, prepare it, check serving, run bh-02, check serving again, read the
+    outputs back, and end it. Returns why the lab failed (None if it didn't), each output (None
+    when it isn't there) and whether the workspace tar was over the cap. `allow`: the only domains
+    the sandbox may reach (None: no limit, for the probe alone). The key goes in as a file the
+    program removes, never as a secret or an environment variable of the sandbox."""
+    budget = int(payload["budget_s"])
     sandbox = modal.Sandbox.create(
-        "sleep", "infinity",
-        app=app,
-        image=rollout_image,
-        timeout=int(payload["budget_s"]) + _SANDBOX_GRACE_S,
-        cpu=2.0,
-        memory=4096,
-        workdir="/work",
-        outbound_domain_allowlist=allow,
+        "sleep", "infinity", app=app, image=rollout_image, timeout=budget + _SANDBOX_GRACE_S,
+        cpu=2.0, memory=(4096, 8192), workdir="/work", outbound_domain_allowlist=allow,
     )  # fmt: skip
     try:
         files = sandbox.filesystem
@@ -144,18 +157,26 @@ def _sandbox_run(
         files.make_directory("/lab", create_parents=True)
         files.write_text(json.dumps(payload), "/lab/request.json")
         files.write_text(key, "/lab/key")
-        process = sandbox.exec(
-            "python3", _ENTRY, "--key-file", "/lab/key", "--stop-strays",
-            timeout=int(payload["budget_s"]) + _SANDBOX_GRACE_S - 60,
-        )  # fmt: skip
-        process.wait()
+        prepare = sandbox.exec("python3", _ENTRY, "prepare", "--key-file", "/lab/key", timeout=300)
+        prepare.wait()
+        before = serving()
+        failed = lab_failure(prepare.returncode, before, True)
+        if failed is not None:
+            return failed, {}, False
+        # From here the model's code exists: whatever goes wrong may be its doing.
+        sandbox.exec("python3", _ENTRY, "run", timeout=budget + _SANDBOX_GRACE_S - 60).wait()
+        failed = lab_failure(0, True, serving())
         outputs: dict[str, bytes | None] = {}
+        tar_over = False
         for name in _OUTPUTS:
             try:
+                if name == "work.tar" and files.stat(f"/lab/out/{name}").size > int(MAX_BYTES * 1.25):
+                    tar_over, outputs[name] = True, None
+                    continue
                 outputs[name] = files.read_bytes(f"/lab/out/{name}")
-            except Exception:  # an output that isn't there; whether that matters is `settled`'s call
+            except Exception:  # an output that isn't there; `settled` decides what that means
                 outputs[name] = None
-        return process.returncode, outputs
+        return failed, outputs, tar_over
     finally:
         sandbox.terminate()
 
@@ -190,16 +211,19 @@ def run(request_json: dict[str, Any], battery: str = "core") -> dict[str, Any]:
     base_url = _base_url()
     payload = sandbox_request(request, task.prompt, base_url, _plugins(request.genome), _PINS)
     repo = [(e.path, e.content, e.executable) for e in task.repo]
-    code, outputs = _sandbox_run(payload, repo, [urlparse(base_url).hostname or ""], os.environ["ORNITH_KEY"])
-    return _stored(request, code, outputs).to_json()
+    key = os.environ["ORNITH_KEY"]
+    failed, outputs, tar_over = _sandbox_run(
+        payload, repo, [urlparse(base_url).hostname or ""], key, functools.partial(_serving, base_url, key)
+    )
+    return _stored(request, failed, outputs, tar_over).to_json()
 
 
-def _stored(request: RolloutRequest, code: int | None, outputs: dict[str, bytes | None]) -> Rollout:
+def _stored(request: RolloutRequest, failed: str | None, outputs: dict[str, bytes | None], tar_over: bool) -> Rollout:
     """Decide what the rollout was (`settled`), then hash and store its outputs under its own id.
     The event log and bh-02's log are kept even when the lab failed, for finding out why.
 
     Raises:
-        LabError: The sandbox's program did not finish.
+        LabError: The lab failed the rollout (`failed` says why).
     """
     run_id = uuid.uuid4().hex
     root = Path("/artefacts")
@@ -208,11 +232,9 @@ def _stored(request: RolloutRequest, code: int | None, outputs: dict[str, bytes 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(outputs.get(name) or b"")
     artefacts.commit()
-    try:
-        entries, ended = settled(code, outputs.get("result.json"), outputs.get("work.tar"))
-    except LabError as error:
-        error.add_note(f"rollout {run_id}: its event log and bh-02's log are in {ARTEFACTS}")
-        raise
+    if failed is not None:
+        raise LabError(f"{failed}; rollout {run_id}'s logs are in {ARTEFACTS}")
+    entries, ended = settled(outputs.get("result.json"), outputs.get("work.tar"), tar_over)
     snapshot = tree_digest(entries)
     transcript_bytes = outputs.get("transcript.jsonl") or b""
     transcript = digest(transcript_bytes)
@@ -244,10 +266,10 @@ def probe_jail() -> dict[str, Any]:
         "jail": "bh-02",
         "plugins": [],
     }
-    code, outputs = _sandbox_run(payload, [], None, key="")
+    failed, outputs, _ = _sandbox_run(payload, [], None, key="", serving=lambda: True)
     text = {name: (outputs.get(name) or b"").decode(errors="replace") for name in _OUTPUTS if name != "work.tar"}
     return {
-        "exit_code": code,
+        "failed": failed,
         "result": text["result.json"],
         "jail": [line for line in text["events.jsonl"].splitlines() if '"field": "jail"' in line],
         "events": text["events.jsonl"][-4000:],

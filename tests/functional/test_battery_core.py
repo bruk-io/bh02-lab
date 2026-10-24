@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -26,13 +27,22 @@ def _write(root: Path, entries: Iterable[Entry]) -> None:
 
 
 def _judged(tmp_path: Path, task: Task, work_files: Iterable[Entry]) -> bool:
-    work = tmp_path / "work"
+    # As root the harness runs each case as nobody, as the judge does: the workspace must be
+    # where nobody can read it, as /work is in the judge's sandbox.
+    shared = Path(tempfile.mkdtemp(prefix="bh02-lab-work-"))
+    shared.chmod(0o755)
+    work = shared / "work"
     _write(work, work_files)
+    for path in [work, *work.rglob("*")]:
+        path.chmod(0o755 if path.is_dir() else 0o644)
     request = {"work": str(work), "cases": public_steps(task.cases), "timeout_s": 20}
-    done = subprocess.run(
-        [sys.executable, "-I", cases.__file__], input=json.dumps(request), capture_output=True, text=True, timeout=120,
-        check=False,
-    )  # fmt: skip
+    try:
+        done = subprocess.run(
+            [sys.executable, "-I", cases.__file__], input=json.dumps(request), capture_output=True, text=True,
+            timeout=120, check=False,
+        )  # fmt: skip
+    finally:
+        shutil.rmtree(shared)
     return outcome(task.cases, observed(done.stdout)).passed
 
 
@@ -57,6 +67,10 @@ CHEATS = {
     "exits cleanly at import": b"import os\nos._exit(0)\n",
     "replaces json in the child": b'import json\njson.dumps = lambda *a, **k: \'{"i": 0, "returned": [1, 2, 3]}\'\n',
     "leaves a conftest and a sitecustomize": b"",
+    "kills the harness": b"import os, signal\nos.kill(os.getppid(), signal.SIGKILL)\n",
+    "leaves a process behind in a new session": (
+        b"import os, subprocess\nsubprocess.Popen(['sleep', '600'], start_new_session=True)\n"
+    ),
 }
 
 

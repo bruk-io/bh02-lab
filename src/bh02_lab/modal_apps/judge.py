@@ -9,7 +9,10 @@ compares that with the expected values (`battery.outcome`). A verdict is written
 snapshot, task and judge pin, and never overwritten; asking again returns the first.
 
 A failure of the lab's own (a snapshot not in the store, a sandbox that didn't start) raises, so
-the gate counts it as the lab's error and no verdict is kept for it.
+the gate counts it as the lab's error and no verdict is kept for it. Once the snapshot is in the
+sandbox, its code may cause anything that goes wrong, so from then on a failure is a failing case.
+Each case runs as `nobody` under resource limits, and the report goes to a file only root can
+write.
 
 Deploy: `modal deploy -m bh02_lab.modal_apps.judge`.
 """
@@ -48,7 +51,8 @@ judge_image = lab_image(ship={"battery": ["**/reference/**", "**/repo/**"], "src
 check_image = (
     modal.Image.debian_slim(python_version=_PYTHON)
     .add_local_file(repo_root() / _HARNESS, "/opt/judge/cases.py", copy=True)
-    .run_commands("mkdir -p /in /work")
+    .apt_install("util-linux")  # setpriv and prlimit: each case runs as nobody under limits
+    .run_commands("mkdir -p /in /work /out && chmod 700 /in /out")
 )
 
 
@@ -105,20 +109,34 @@ def verify(rollout_json: dict[str, Any], battery_name: str = "core") -> dict[str
 
 
 def _run_cases(tar: bytes, steps: list[list[dict[str, Any]]]) -> str:
-    """Run the steps against the snapshot in a fresh sandbox with no network; the harness's report."""
-    request = {"work": "/work", "tar": "/in/snapshot.tar", "cases": steps, "timeout_s": _CASE_TIMEOUT_S}
+    """Run the steps against the snapshot in a fresh sandbox with no network; the harness's report.
+
+    Until the snapshot is in, a failure is the lab's and raises. From then on the workspace's code
+    runs, and may be why anything fails, so a run that breaks or never finishes leaves what the
+    report holds so far, and the cases it lacks fail.
+    """
+    request = {
+        "work": "/work", "tar": "/in/snapshot.tar", "cases": steps, "timeout_s": _CASE_TIMEOUT_S,
+        "report": "/out/report",
+    }  # fmt: skip
     sandbox = modal.Sandbox.create(
         "sleep", "infinity", app=app, image=check_image, block_network=True,
-        timeout=_SANDBOX_TIMEOUT_S, cpu=1.0, memory=2048, workdir="/tmp",
+        timeout=_SANDBOX_TIMEOUT_S, cpu=1.0, memory=(2048, 2048), workdir="/tmp",
     )  # fmt: skip
     try:
         sandbox.filesystem.write_bytes(tar, "/in/snapshot.tar")
         sandbox.filesystem.write_text(json.dumps(request), "/in/request.json")
-        process = sandbox.exec(
-            "python3", "-I", "/opt/judge/cases.py", "--request", "/in/request.json", timeout=_SANDBOX_TIMEOUT_S - 60
-        )
-        report = str(process.stdout.read())
-        process.wait()
-        return report
+        try:
+            sandbox.exec(
+                "python3", "-I", "/opt/judge/cases.py", "--request", "/in/request.json",
+                stdout=modal.stream_type.StreamType.DEVNULL, stderr=modal.stream_type.StreamType.DEVNULL,
+                timeout=_SANDBOX_TIMEOUT_S - 60,
+            ).wait()  # fmt: skip
+            return str(sandbox.filesystem.read_text("/out/report"))
+        except Exception:  # the workspace's code may have caused it: what was reported stands
+            try:
+                return str(sandbox.filesystem.read_text("/out/report"))
+            except Exception:  # no report at all: every case fails
+                return ""
     finally:
         sandbox.terminate()

@@ -19,7 +19,8 @@ uv run bh02-lab --help                                   # the lab lead's CLI
 - **Credentials stay where they belong**: the inference key in the serving app and the rollout sandbox (bh-02's `local.env`, which its jail keeps from the model's code); the gate token in the gate and in the lead's vault; Modal's and Anthropic's own credentials nowhere in a sandbox or the lead's environment.
 - **A rollout is pinned by what was built, not what it says**: the runner refuses a request whose image digest or serving hash is not the pinned one, and hashes and re-packs the workspace itself.
 - **Expected values never enter a sandbox**: the check sandbox gets `battery.public_steps` (no `expect`), and `battery.outcome` compares outside it. Never weaken that rule: every step with an expected value observed and matching, every case.
-- **The lab's failures raise, the model's are verdicts**: `rollout_core.settled` and the judge raise for what the lab failed to do, so the gate leaves it out of the score; never turn one into a failing verdict, and never cache a verdict for one.
+- **The lab's failures raise, the model's are verdicts, and the line between them is where the model's code starts**: before it (the `prepare` step, serving health, getting the snapshot into the judge's sandbox) a failure raises and the gate leaves it out of the score; after it, everything is the model's (`rollout_core.settled`, the judge's `_run_cases`), because the model may have caused it. Never move work across that line.
+- **Each judge case runs as `nobody` under limits** (`sandbox/cases.py`), and its report goes to a file only root can write.
 
 ## Code
 

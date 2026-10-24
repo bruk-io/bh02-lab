@@ -9,8 +9,10 @@ it has to return the right answers, which is solving the task.
 
 Input, on stdin or in the file `--request PATH` names, one JSON object: `work` (the workspace
 directory), `tar` (optional: a canonical snapshot tar to extract into `work` first, before any
-workspace code runs), `cases` (each a list of steps), `timeout_s` (per case). Output, on stdout:
-one line per case, `CASE <n> <json>`, the case's observations.
+workspace code runs), `cases` (each a list of steps), `timeout_s` (per case). Output, in the file
+`report` names (else on stdout): one line per case, `CASE <n> <json>`, the case's observations.
+Run as root, as the judge runs it, each case runs as `nobody` under limits on memory, processes,
+file size and CPU, so its code can't reach the report, the harness or another case.
 
 Each case runs in a fresh child process, isolated (`-I`), with the workspace first on its import
 path and its own empty working directory. A step is one of:
@@ -31,17 +33,23 @@ import importlib
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
 import threading
-from typing import Any
+from typing import Any, TextIO
 
 __all__ = ["main"]
 
 _MAX_REPORT = 4 * 1024 * 1024  # what a case may report; the rest is not read
+_NOBODY = 65534
+_MEMORY = 1024 * 1024 * 1024
+_PROCESSES = 64
+_FILE = 64 * 1024 * 1024
+_CPU_S = 60
 
 
 def _encoded(value: Any) -> Any:
@@ -88,12 +96,35 @@ def _child(sink: Any, steps: list[dict[str, Any]]) -> None:
         sink.flush()
 
 
+def _confined(command: list[str], cwd: str) -> list[str]:
+    """As root (the judge's sandbox), a case runs as `nobody` under resource limits, so it can't
+    touch the harness, its report or another case; as anyone else (a developer's tests), as is."""
+    if os.geteuid() != 0 or not (shutil.which("setpriv") and shutil.which("prlimit")):
+        return command
+    os.chown(cwd, _NOBODY, _NOBODY)
+    limits = [f"--as={_MEMORY}", f"--nproc={_PROCESSES}", f"--fsize={_FILE}", f"--cpu={_CPU_S}", "--core=0"]
+    owner = ["setpriv", f"--reuid={_NOBODY}", f"--regid={_NOBODY}", "--clear-groups"]
+    return ["prlimit", *limits, "--", *owner, *command]
+
+
+def _end_nobodys() -> None:
+    """Kill whatever a case left running as `nobody`, wherever it moved to (a new session too)."""
+    if os.geteuid() != 0:
+        return
+    for entry in os.listdir("/proc"):
+        if entry.isdigit():
+            with contextlib.suppress(OSError):
+                if os.stat(f"/proc/{entry}").st_uid == _NOBODY:
+                    os.kill(int(entry), signal.SIGKILL)
+
+
 def _run_case(work: str, steps: list[dict[str, Any]], timeout_s: float) -> list[dict[str, Any]]:
     read, write = os.pipe()
     with tempfile.TemporaryDirectory() as cwd:
         try:
+            command = [sys.executable, "-I", os.path.abspath(__file__), "--child", str(write), work]
             child = subprocess.Popen(
-                [sys.executable, "-I", os.path.abspath(__file__), "--child", str(write), work],
+                _confined(command, cwd),
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 cwd=cwd, pass_fds=(write,), text=True, start_new_session=True,
             )  # fmt: skip
@@ -111,6 +142,7 @@ def _run_case(work: str, steps: list[dict[str, Any]], timeout_s: float) -> list[
                 child.wait(timeout_s)
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(child.pid, signal.SIGKILL)  # the case and anything it started
+            _end_nobodys()
             child.wait()
             reader.join(5)
         seen = []
@@ -125,9 +157,9 @@ def _run_case(work: str, steps: list[dict[str, Any]], timeout_s: float) -> list[
 def main() -> int:
     """Run every case and print its observations, one line per case."""
     if len(sys.argv) == 4 and sys.argv[1] == "--child":
-        sink = os.fdopen(int(sys.argv[2]), "w", encoding="utf-8")
+        channel = os.fdopen(int(sys.argv[2]), "w", encoding="utf-8")
         sys.path.insert(0, sys.argv[3])
-        _child(sink, json.loads(sys.stdin.read()))
+        _child(channel, json.loads(sys.stdin.read()))
         return 0
     if len(sys.argv) == 3 and sys.argv[1] == "--request":
         with open(sys.argv[2], encoding="utf-8") as file:
@@ -139,9 +171,16 @@ def main() -> int:
         os.makedirs(work, exist_ok=True)
         with tarfile.open(request["tar"]) as archive:
             archive.extractall(work, filter="data")
-    for n, steps in enumerate(request["cases"]):
-        seen = _run_case(work, steps, float(request.get("timeout_s", 20)))
-        print(f"CASE {n} {json.dumps(seen)}", flush=True)
+    report = request.get("report")
+    with contextlib.ExitStack() as stack:
+        sink: TextIO = sys.stdout
+        if report:
+            sink = stack.enter_context(open(report, "w", encoding="utf-8"))
+            os.chmod(report, 0o600)
+        for n, steps in enumerate(request["cases"]):
+            seen = _run_case(work, steps, float(request.get("timeout_s", 20)))
+            sink.write(f"CASE {n} {json.dumps(seen)}\n")
+            sink.flush()
     return 0
 
 

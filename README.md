@@ -23,7 +23,7 @@ lab lead (Managed Agents, cloud sandbox)
 - **bh-02 is not changed.** `headless/` is a cordis row that takes the place of bh-02's terminal app through `--patch`: it sends the task, records what bh-02 shows and asks, and ends the session.
 - **Transcripts are training data, never evidence.** Only the judge's verdicts on the snapshot count.
 - **The judge's answers never enter a sandbox.** A task's hidden checks are data (`check/cases.json`: steps and the value each must give). The check sandbox runs the steps against the workspace and reports what happened; the comparison happens outside it. Code in the workspace can return or print anything, but it passes only by giving the right answers.
-- **The lab's failures are not the model's.** A sandbox that didn't finish, a snapshot missing from the store or a judge that didn't run is reported as an error and left out of the score; the run is marked incomplete.
+- **The lab's failures are not the model's, and the model can't make its failures the lab's.** The rollout sandbox runs in two commands: `prepare` (no model code yet; its failure, or a serving endpoint that is down before or after the run, is the lab's, left out of the score and marking the run incomplete) and `run` (from bh-02's start, anything that goes wrong counts against the model). The judge works the same way: until the snapshot is in its sandbox a failure is the lab's; after, a failing case.
 
 ## Layout
 
@@ -62,4 +62,6 @@ What needs your credentials, in order. Nothing below has run against Modal or Ma
 - **`jail = "sandbox"` exposes the inference key** to the model's code while bh-02 runs: with no jail inside the sandbox, it can read bh-02's `local.env`. The key only buys inference on the lab's endpoint; rotate it after such runs, or put a proxy in front of the server. With bh-02's own jail (the default), the jail keeps it out of reach (`tests/e2e/test_sandbox_entry.py` proves that locally).
 - **The hidden checks and references are in this repository.** Anything that can read it (the lead's environment installs it from GitHub) can read them. Phase 0 doesn't let the lead write anything a rollout sees; before a later phase does, the checks move to a store only the judge reads.
 - **Nothing uploads a genome's plugins yet.** The runner reads them from the artefacts volume by hash; Phase 1 adds the way in.
+- **In `jail = "sandbox"` the model holds the inference key and can reach the serving host**, so it could overload the endpoint and make the after-run health check fail, turning its rollout into a lab error. Watch for incomplete runs if that mode is used.
+- **The gate caches pins per web container**, so `bh02-lab pins` can show the old image digest for a few minutes after a redeploy of the rollout or judge app.
 - **Replicates differ only by sampling.** bh-02's OpenAI provider sends no seed, so `seed` is a replicate's index, not a sampling seed.
