@@ -76,7 +76,9 @@ def outcome(junit_xml: str | None, expected: int) -> Outcome:
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
     if not suites:
         return Outcome(False, "the report holds no test suite")
-    count = {name: sum(int(suite.get(name, "0")) for suite in suites) for name in ("tests", "failures", "errors", "skipped")}
+    count = {
+        name: sum(int(suite.get(name, "0")) for suite in suites) for name in ("tests", "failures", "errors", "skipped")
+    }
     passed = count["tests"] - count["failures"] - count["errors"] - count["skipped"]
     if count["tests"] != expected:
         return Outcome(False, f"{count['tests']} checks ran, the task has {expected}")
@@ -136,7 +138,9 @@ def _task(path: Path, with_checks: bool) -> Task:
         title, checks = str(meta["title"]), int(meta["checks"])
     except (OSError, KeyError, ValueError, TypeError) as error:
         raise BatteryError(f"task {path.name}: {type(error).__name__}: {error}") from error
-    parts = {part: tuple(read_tree(path / part)) if (path / part).is_dir() else () for part in ("repo", "check", "reference")}
+    parts = {
+        part: tuple(read_tree(path / part)) if (path / part).is_dir() else () for part in ("repo", "check", "reference")
+    }
     if not parts["repo"] or (with_checks and not parts["check"]):
         raise BatteryError(f"task {path.name} needs a repo/ and a check/ directory, each with files")
     return Task(path.name, title, checks, prompt, parts["repo"], parts["check"], parts["reference"])

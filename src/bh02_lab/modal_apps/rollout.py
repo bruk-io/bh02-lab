@@ -94,12 +94,18 @@ def _base_url() -> str:
 
 
 def _plugins(genome: frozenset[str]) -> list[dict[str, str]]:
-    """The genome's plugin sources from the volume, each checked against the hash that names it."""
+    """The genome's plugin sources from the volume, each checked against the hash that names it.
+
+    Raises:
+        ValueError: A stored plugin does not hash to its name.
+    """
     found = []
     for plugin_hash in sorted(genome):
         source = Path(f"/artefacts/genome/{plugin_hash}.py").read_bytes()
         if digest(source) != plugin_hash:
-            raise ValueError(f"genome plugin {plugin_hash} does not hash to its name; it was changed after it was stored")
+            raise ValueError(
+                f"genome plugin {plugin_hash} does not hash to its name; it was changed after it was stored"
+            )
         found.append({"name": f"g_{plugin_hash[:12]}", "source": source.decode()})
     return found
 
@@ -134,7 +140,7 @@ def _sandbox_run(
         for name in ("result.json", "work.tar", "transcript.jsonl", "events.jsonl", "bh02.log"):
             try:
                 outputs[name] = files.read_bytes(f"/lab/out/{name}")
-            except Exception:  # noqa: BLE001 - a missing output is recorded as missing, whatever the sandbox did
+            except Exception:  # a missing output is kept as missing, whatever the sandbox did
                 outputs[name] = b""
         return outputs
     finally:
@@ -212,11 +218,7 @@ def probe_jail() -> dict[str, Any]:
         "plugins": [],
     }
     outputs = _sandbox_run(payload, [], None)
-    jail = [
-        line
-        for line in outputs["events.jsonl"].decode(errors="replace").splitlines()
-        if '"field": "jail"' in line
-    ]
+    jail = [line for line in outputs["events.jsonl"].decode(errors="replace").splitlines() if '"field": "jail"' in line]
     return {
         "result": outputs["result.json"].decode(errors="replace"),
         "jail": jail,

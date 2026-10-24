@@ -53,40 +53,40 @@ def _cli(url: str, *args: str, token: str = TOKEN) -> Any:
     return CliRunner().invoke(main, list(args), env={"BH02_LAB_GATE_URL": url, "BH02_LAB_TOKEN": token})
 
 
-def test_a_battery_run_waits_and_prints_the_summary(gate: tuple[str, FakeRunner]):
+def test_a_battery_run_waits_and_prints_the_summary(gate: tuple[str, FakeRunner]) -> None:
     url, runner = gate
     result = _cli(url, "battery", "run", "--k", "3", "--poll-s", "0")
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["score"] == 0.5
+    assert json.loads(result.output)["score"] == pytest.approx(0.5)
     assert runner.asked[0][1:] == ([], 3, "core")
 
 
-def test_pins_come_back_as_json(gate: tuple[str, FakeRunner]):
+def test_pins_come_back_as_json(gate: tuple[str, FakeRunner]) -> None:
     url, _ = gate
     result = _cli(url, "pins", "--battery", "core")
     assert json.loads(result.output) == {"model": "srv-1", "battery": "core"}
 
 
-def test_a_wrong_token_is_refused_and_starts_nothing(gate: tuple[str, FakeRunner]):
+def test_a_wrong_token_is_refused_and_starts_nothing(gate: tuple[str, FakeRunner]) -> None:
     url, runner = gate
     result = _cli(url, "battery", "run", token="wrong")
     assert result.exit_code == 1 and "401" in result.output
     assert runner.asked == []
 
 
-def test_every_route_needs_the_token(gate: tuple[str, FakeRunner]):
+def test_every_route_needs_the_token(gate: tuple[str, FakeRunner]) -> None:
     url, _ = gate
     for method, path in (("GET", "/pins"), ("POST", "/batteries"), ("GET", "/batteries/x")):
         assert httpx.request(method, url + path, json={}).status_code == 401
 
 
-def test_a_bad_ask_is_refused_with_why(gate: tuple[str, FakeRunner]):
+def test_a_bad_ask_is_refused_with_why(gate: tuple[str, FakeRunner]) -> None:
     url, runner = gate
     result = _cli(url, "battery", "run", "--genome", "not-a-hash")
     assert result.exit_code == 1 and "422" in result.output and "plugin hashes" in result.output
     assert runner.asked == []
 
 
-def test_the_cli_says_what_to_set_without_a_gate():
+def test_the_cli_says_what_to_set_without_a_gate() -> None:
     result = CliRunner().invoke(main, ["pins"], env={"BH02_LAB_GATE_URL": "", "BH02_LAB_TOKEN": ""})
     assert result.exit_code == 1 and "BH02_LAB_GATE_URL" in result.output

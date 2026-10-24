@@ -66,7 +66,9 @@ def _settings() -> tuple[str, str]:
     return url.rstrip("/"), token
 
 
-def _call(method: str, path: str, body: Mapping[str, Any] | None = None, sleep: Callable[[float], None] = time.sleep) -> Any:
+def _call(
+    method: str, path: str, body: Mapping[str, Any] | None = None, sleep: Callable[[float], None] = time.sleep
+) -> Any:
     url, token = _settings()
     attempt = 1
     while True:
@@ -125,7 +127,9 @@ def battery_run(genome: tuple[str, ...], k: int, battery: str, wait: bool, poll_
     job = _call("GET", f"/batteries/{started['id']}")
     while waited(job):
         if time.monotonic() > deadline:
-            _fail(f"battery run {started['id']} is still {job['status']}; `bh02-lab battery status {started['id']}` later")
+            _fail(
+                f"battery run {started['id']} is still {job['status']}; `bh02-lab battery status {started['id']}` later"
+            )
         time.sleep(poll_s)
         job = _call("GET", f"/batteries/{started['id']}")
     _print(job)

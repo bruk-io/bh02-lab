@@ -48,7 +48,7 @@ class RolloutRequest:
 
         Raises:
             ContractError: A field is missing or of the wrong type.
-        """
+        """  # ruff: ignore[docstring-extraneous-exception] - the field readers raise it
         return cls(
             image_digest=_text(data, "image_digest"),
             genome=frozenset(_texts(data, "genome")),

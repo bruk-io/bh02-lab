@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# A bh-02 checkout at the SHA pins.toml names, with its environment and the headless row, for
+# scripts/check's headless and end-to-end tests: `BH02_CHECKOUT=$(scripts/bh02-checkout DIR)`.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+target="${1:?usage: scripts/bh02-checkout DIR}"
+read -r repo sha python < <(uv run --quiet python -c 'from bh02_lab.pins import load; p = load(); print(p.bh02.repo, p.bh02.sha, p.bh02.python)')
+[[ -d "$target/.git" ]] || git clone --quiet "$repo" "$target"
+git -C "$target" fetch --quiet origin "$sha" 2>/dev/null || true
+git -C "$target" checkout --quiet --detach "$sha"
+uv python install --quiet "$python"
+(cd "$target" && uv sync --quiet --all-packages --frozen)
+uv pip install --quiet --python "$target/.venv/bin/python" -e headless
+cd "$target" && pwd

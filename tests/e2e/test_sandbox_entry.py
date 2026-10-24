@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from bh02_lab.snapshot import entries_of
 from bh02_lab.sandbox import entry
+from bh02_lab.snapshot import entries_of
 
 CHECKOUT = Path(os.environ.get("BH02_CHECKOUT", "/nonexistent"))
 
@@ -43,7 +43,7 @@ def _run(tmp_path: Path, prompt: str, jail: str) -> tuple[Path, dict[str, object
     return lab / "out", json.loads((lab / "out" / "result.json").read_text())
 
 
-def test_a_run_leaves_the_workspace_transcript_and_events(tmp_path: Path):
+def test_a_run_leaves_the_workspace_transcript_and_events(tmp_path: Path) -> None:
     out, result = _run(tmp_path, "open('answer.txt', 'w').write('42')", "sandbox")
     assert result == {"exit_code": 0, "ended": "replied"}, (out / "bh02.log").read_text()
     files = {e.path: e.content for e in entries_of((out / "work.tar").read_bytes())}
@@ -53,7 +53,7 @@ def test_a_run_leaves_the_workspace_transcript_and_events(tmp_path: Path):
     assert kinds[-1] == "end" and "confirm" in kinds
 
 
-def test_the_key_file_is_gone_after_the_run(tmp_path: Path):
+def test_the_key_file_is_gone_after_the_run(tmp_path: Path) -> None:
     _run(tmp_path, "print('hi')", "sandbox")
     assert not (CHECKOUT / "local.env").exists()
 
@@ -69,7 +69,7 @@ with StubServer(key=sys.argv[1]) as server:
 
 
 @pytest.mark.skipif(not Path("/usr/bin/bwrap").exists(), reason="bubblewrap is not installed")
-def test_the_key_reaches_the_server_and_not_the_models_code(tmp_path: Path):
+def test_the_key_reaches_the_server_and_not_the_models_code(tmp_path: Path) -> None:
     key = "sk-lab-test-0123456789"
     stub = subprocess.Popen(
         [str(CHECKOUT / ".venv" / "bin" / "python"), "-c", _STUB, key],

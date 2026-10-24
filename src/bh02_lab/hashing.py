@@ -17,7 +17,17 @@ __all__ = ["Entry", "digest", "kept", "tree_digest"]
 
 # Directories a run leaves that are not the work: caches, environments and version control.
 _SKIPPED_DIRS = frozenset(
-    {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "mypy_cache", ".git", ".venv", "venv", "node_modules"}
+    {
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "mypy_cache",
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+    }
 )
 
 

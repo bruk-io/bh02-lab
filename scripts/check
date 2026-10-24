@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# The one definition of green: format, lint, types, the lab's tests, the headless row's tests
+# inside bh-02's own environment, and the architecture gate.
+#
+# The headless row and the end-to-end tests need a bh-02 checkout at the pinned SHA with the
+# headless row installed into its environment. Set BH02_CHECKOUT to one; `scripts/bh02-checkout`
+# makes it. Without it those tests are skipped and this says so.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+uv sync --quiet --extra modal
+uv run ruff format --check .
+uv run ruff check --no-fix .
+uv run mypy
+uv run pytest -q
+if [[ -n "${BH02_CHECKOUT:-}" && -x "$BH02_CHECKOUT/.venv/bin/python" ]]; then
+    uv pip install --quiet --python "$BH02_CHECKOUT/.venv/bin/python" -e headless
+    "$BH02_CHECKOUT/.venv/bin/python" -m pytest -q -p no:cacheprovider --rootdir headless -o asyncio_mode=auto headless/tests
+else
+    echo "skipped: the headless row's tests and the end-to-end tests (set BH02_CHECKOUT; scripts/bh02-checkout makes one)" >&2
+fi
+scripts/arch-check

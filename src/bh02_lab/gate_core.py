@@ -74,9 +74,11 @@ def summary(
     rows: list[dict[str, Any]] = []
     for request, verdict in zip(requests, verdicts, strict=True):
         if isinstance(verdict, BaseException):
-            errors.append({"task_id": request.task_id, "seed": request.seed, "error": f"{type(verdict).__name__}: {verdict}"})
+            errors.append(
+                {"task_id": request.task_id, "seed": request.seed, "error": f"{type(verdict).__name__}: {verdict}"}
+            )
             continue
-        results[(request.task_id, request.seed)] = verdict.passed
+        results[request.task_id, request.seed] = verdict.passed
         rows.append({"task_id": request.task_id, "seed": request.seed, **verdict.to_json()})
     report: dict[str, Any] = {
         "genome": genome_id(ask.genome),
@@ -99,4 +101,3 @@ def summary(
             },
         }
     return report
-

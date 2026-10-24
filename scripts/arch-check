@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# The architecture gate: index src, then pypeeker's strict check (plain `check` hides heuristic
+# findings, and against a missing index it passes silently). pypeeker is pinned to the commit
+# bh-02 pins; it is pre-1.0, so the pin moves only on purpose.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+PYPEEKER=(uvx --quiet --python 3.14 --from "pypeeker @ git+https://github.com/brukhabtu/pypeeker@cd78c2c" pypeeker)
+"${PYPEEKER[@]}" index src >/dev/null
+"${PYPEEKER[@]}" check --strict

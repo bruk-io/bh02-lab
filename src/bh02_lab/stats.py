@@ -50,7 +50,7 @@ def noise_band(results: Results, rng: random.Random, draws: int = 2000, level: f
 
     Raises:
         ValueError: There are no results, or `level` is not between 0 and 1.
-    """
+    """  # ruff: ignore[docstring-extraneous-exception] - score and _percentiles raise it
     by_task = _by_task(results)
     estimate = score(results)
     samples = sorted(
@@ -78,9 +78,7 @@ def paired_diff(
         task: [float(candidate[key]) - float(incumbent[key]) for key in shared if key[0] == task] for task in tasks
     }
     estimate = _mean([_mean(values) for values in diffs.values()])
-    samples = sorted(
-        _mean([_mean(diffs[tasks[rng.randrange(len(tasks))]]) for _ in tasks]) for _ in range(draws)
-    )
+    samples = sorted(_mean([_mean(diffs[tasks[rng.randrange(len(tasks))]]) for _ in tasks]) for _ in range(draws))
     return Band(estimate, *_percentiles(samples, level))
 
 

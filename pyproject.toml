@@ -47,12 +47,12 @@ extend-exclude = ["battery/*/*/repo", "battery/*/*/reference", "headless"]
 
 [tool.ruff.lint]
 preview = true
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "D101", "D103", "DOC501", "DOC502"]
-ignore = ["RUF001"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "undocumented-public-class", "undocumented-public-function", "docstring-missing-exception", "docstring-extraneous-exception"]
+ignore = ["ambiguous-unicode-character-string"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D101", "D103", "DOC501", "DOC502"]
-"battery/**" = ["D101", "D103", "DOC501", "DOC502"]
+"tests/**" = ["undocumented-public-class", "undocumented-public-function", "docstring-missing-exception", "docstring-extraneous-exception"]
+"battery/**" = ["undocumented-public-class", "undocumented-public-function", "docstring-missing-exception", "docstring-extraneous-exception"]
 
 [tool.mypy]
 strict = true
@@ -64,3 +64,27 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = ["modal", "modal.*", "fastapi", "fastapi.*"]
 ignore_missing_imports = true
+
+# The architecture gate: `scripts/arch-check` (it indexes first; a bare `pypeeker check` against a
+# missing index passes silently). The core imports nothing that does I/O on the network or knows
+# Modal; the sandbox program imports nothing of the lab; only modal_apps knows Modal.
+[tool.pypeeker]
+src = ["src"]
+rules = ["import-boundaries", "no-import-cycles", "under-exposed-access"]
+
+[tool.pypeeker.import-boundaries]
+root = "bh02_lab"
+strict = true  # a new module must be declared below
+
+[tool.pypeeker.import-boundaries.allow]
+contract = []                               # the wire values; pure
+hashing = []                                # content hashes; pure
+stats = []                                  # score, band, paired difference; pure
+snapshot = ["hashing"]                      # tar bytes <-> entries; reads a directory in read_tree only
+pins = ["hashing"]                          # pins.toml as values, the serving hash
+battery = ["hashing", "snapshot"]           # tasks, the check command, the verdict rule
+gate_core = ["contract", "stats"]           # what a battery run asks and adds up to; pure
+gate_api = ["contract", "gate_core"]        # the HTTPS API over injected stores
+cli = []                                    # the lab lead's tool: HTTP only
+sandbox = []                                # runs inside the rollout sandbox: standard library only
+modal_apps = ["battery", "contract", "gate_api", "gate_core", "hashing", "pins", "snapshot", "stats"]

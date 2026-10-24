@@ -93,4 +93,5 @@ def web() -> Any:
     def start(job_id: str, genome: list[str], k: int, battery: str) -> None:
         run_battery.spawn(job_id, genome, k, battery)
 
-    return build_api(jobs, start, _pins_now, os.environ["GATE_TOKEN"])
+    store: Any = jobs  # a modal.Dict is a mapping by its methods, not by its type
+    return build_api(store, start, _pins_now, os.environ["GATE_TOKEN"])

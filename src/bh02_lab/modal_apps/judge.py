@@ -19,8 +19,8 @@ import modal
 from bh02_lab import battery
 from bh02_lab.battery import Outcome, check_command, judge_sha, load_battery, outcome
 from bh02_lab.contract import Rollout, Verdict
-from bh02_lab.modal_apps.common import APPS, ARTEFACTS, LAB_ROOT, VERDICTS, lab_image, repo_root
 from bh02_lab.hashing import tree_digest
+from bh02_lab.modal_apps.common import APPS, ARTEFACTS, LAB_ROOT, VERDICTS, lab_image, repo_root
 from bh02_lab.snapshot import entries_of
 
 __all__ = ["app", "pin", "verify"]
@@ -98,7 +98,7 @@ def _checked(tar: bytes, battery_name: str, task_id: str, expected: int) -> Outc
         sandbox.exec(*check_command("python", checks, "/work", report), timeout=_CHECK_TIMEOUT_S).wait()
         try:
             xml: str | None = files.read_text(report)
-        except Exception:  # noqa: BLE001 - no report is a verdict of its own, whatever stopped it
+        except Exception:  # no report is a verdict of its own, whatever stopped it
             xml = None
     finally:
         sandbox.terminate()

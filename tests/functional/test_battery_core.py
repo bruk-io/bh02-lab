@@ -36,36 +36,38 @@ def _judged(tmp_path: Path, task: Task, work_files: Iterable[Entry]) -> bool:
     return outcome(xml, task.checks).passed
 
 
-def test_the_core_battery_has_six_tasks():
+def test_the_core_battery_has_six_tasks() -> None:
     assert len(TASKS) == 6
 
 
 @pytest.mark.parametrize("task_id", sorted(TASKS))
-def test_a_task_fails_as_shipped(tmp_path: Path, task_id: str):
+def test_a_task_fails_as_shipped(tmp_path: Path, task_id: str) -> None:
     assert not _judged(tmp_path, TASKS[task_id], TASKS[task_id].repo)
 
 
 @pytest.mark.parametrize("task_id", sorted(TASKS))
-def test_a_task_passes_with_its_reference(tmp_path: Path, task_id: str):
+def test_a_task_passes_with_its_reference(tmp_path: Path, task_id: str) -> None:
     task = TASKS[task_id]
     solved = {e.path: e for e in task.repo} | {e.path: e for e in task.reference}
     assert _judged(tmp_path, task, solved.values())
 
 
-def test_a_workspace_conftest_cannot_pass_a_task(tmp_path: Path):
+def test_a_workspace_conftest_cannot_pass_a_task(tmp_path: Path) -> None:
     task = TASKS["paginate"]
-    cheat = Entry("conftest.py", False, b"import pytest\ndef pytest_collection_modifyitems(items):\n    items.clear()\n")
+    cheat = Entry(
+        "conftest.py", False, b"import pytest\ndef pytest_collection_modifyitems(items):\n    items.clear()\n"
+    )
     assert not _judged(tmp_path, task, [*task.repo, cheat])
 
 
-def test_the_public_part_holds_no_check():
+def test_the_public_part_holds_no_check() -> None:
     for task in TASKS.values():
         part = public_part(task)
         assert set(part) == {"task_id", "prompt", "repo"}
         assert all(e.content.decode() not in repr(part) for e in task.check)
 
 
-def test_the_judge_pin_moves_with_a_check_and_not_otherwise():
+def test_the_judge_pin_moves_with_a_check_and_not_otherwise() -> None:
     tasks = list(TASKS.values())
     base = judge_sha(tasks, b"judge v1")
     assert base == judge_sha(tasks, b"judge v1")
@@ -76,7 +78,7 @@ def test_the_judge_pin_moves_with_a_check_and_not_otherwise():
     assert judge_sha([edited, *tasks[1:]], b"judge v1") != base
 
 
-def test_a_copy_without_checks_loads_for_the_runner(tmp_path: Path):
+def test_a_copy_without_checks_loads_for_the_runner(tmp_path: Path) -> None:
     import shutil
 
     from bh02_lab.battery import BATTERIES

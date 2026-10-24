@@ -28,6 +28,8 @@ class PinsError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Bh02:
+    """Where bh-02 comes from: its repository, the commit, and the Python it runs on."""
+
     repo: str
     sha: str
     python: str
@@ -35,6 +37,8 @@ class Bh02:
 
 @dataclass(frozen=True, slots=True)
 class Model:
+    """The weights served, by repository and revision, under the name bh-02 asks for."""
+
     repo: str
     revision: str
     served_name: str
@@ -43,6 +47,8 @@ class Model:
 
 @dataclass(frozen=True, slots=True)
 class Serving:
+    """How vLLM serves them: its version, the GPU, the context, its arguments and its sampling."""
+
     vllm: str
     gpu: str
     max_model_len: int
@@ -52,12 +58,16 @@ class Serving:
 
 @dataclass(frozen=True, slots=True)
 class Rollout:
+    """How a rollout runs: its time budget and which jail holds the model's code."""
+
     budget_s: float
     jail: str
 
 
 @dataclass(frozen=True, slots=True)
 class Pins:
+    """Every pin in pins.toml."""
+
     bh02: Bh02
     model: Model
     serving: Serving
