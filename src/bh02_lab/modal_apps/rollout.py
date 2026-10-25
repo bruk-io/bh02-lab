@@ -10,7 +10,7 @@ The image is pinned by the id Modal gives the built image (its digest here); a r
 other digest is refused, so a rollout always ran on the image it names.
 
 Deploy: `modal deploy -m bh02_lab.modal_apps.rollout`.
-Spike (TASK-0001.04): `modal run -m bh02_lab.modal_apps.rollout::probe_jail`.
+Spike (TASK-0001.04): `modal run -m bh02_lab.modal_apps.rollout::probe`.
 """
 
 import functools
@@ -280,3 +280,12 @@ def probe_jail() -> dict[str, Any]:
         "events": text["events.jsonl"][-4000:],
         "log": text["bh02.log"][-4000:],
     }
+
+
+@app.local_entrypoint()
+def probe() -> None:
+    """`modal run -m bh02_lab.modal_apps.rollout::probe`: run `probe_jail` and print what it found
+    (a function run on its own prints nothing of what it returns)."""
+    import json as json_module
+
+    print(json_module.dumps(probe_jail.remote(), indent=2))
