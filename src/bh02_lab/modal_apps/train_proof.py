@@ -26,7 +26,7 @@ _USER, _ASSISTANT = "<|im_start|>user\n", "<|im_start|>assistant\n"  # Qwen's Ch
 app = modal.App(APPS["train"])
 adapters = modal.Volume.from_name("bh02-lab-adapters", create_if_missing=True)
 weights = modal.Volume.from_name("bh02-lab-hf-cache", create_if_missing=True)
-image = lab_image("unsloth", "unsloth_zoo").env({"HF_HOME": "/cache/hf"})
+image = lab_image("unsloth", "unsloth_zoo", env={"HF_HOME": "/cache/hf"})
 
 
 def _answer(model: Any, tokenizer: Any, question: str) -> str:

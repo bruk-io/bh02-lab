@@ -23,9 +23,7 @@ app = modal.App(APPS["serve"])
 weights = modal.Volume.from_name("bh02-lab-hf-cache", create_if_missing=True)
 compile_cache = modal.Volume.from_name("bh02-lab-vllm-cache", create_if_missing=True)
 
-image = lab_image(f"vllm=={_PINS.serving.vllm}", "huggingface_hub[hf_transfer]").env(
-    {"HF_HUB_ENABLE_HF_TRANSFER": "1", "HF_HOME": "/cache/hf"}
-)
+image = lab_image(f"vllm=={_PINS.serving.vllm}", "huggingface_hub", env={"HF_HOME": "/cache/hf"})
 
 
 def command(pinned: Pins) -> list[str]:

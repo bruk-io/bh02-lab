@@ -57,15 +57,21 @@ def pins() -> Pins:
     return load(repo_root() / "pins.toml")
 
 
-def lab_image(*extra_packages: str, ship: Mapping[str, Sequence[str]] | None = None) -> modal.Image:
-    """The image trusted lab code runs in: Python 3.13, the lab package, pins.toml, and
-    `extra_packages`. `ship` maps more repository paths (files or directories) it carries under
-    `repo_root` to the patterns left out of each. It holds no bh-02."""
-    image = (
-        modal.Image.debian_slim(python_version="3.13")
-        .uv_pip_install("httpx>=0.27", *extra_packages)
-        .add_local_file(repo_root() / "pins.toml", str(_SHIPPED / "pins.toml"))
-        .add_local_python_source("bh02_lab")
+def lab_image(
+    *extra_packages: str, env: Mapping[str, str] | None = None, ship: Mapping[str, Sequence[str]] | None = None
+) -> modal.Image:
+    """The image trusted lab code runs in: Python 3.13, `extra_packages`, `env`, then the lab
+    package, pins.toml, and what `ship` names (repository paths it carries under `repo_root`, each
+    with the patterns left out of it). It holds no bh-02.
+
+    The local files come last and are added when a container starts: Modal refuses a build step
+    after them. So an image that needs more build steps takes them as arguments here, never as
+    calls on the image this returns."""
+    image = modal.Image.debian_slim(python_version="3.13").uv_pip_install("httpx>=0.27", *extra_packages)
+    if env:
+        image = image.env(dict(env))
+    image = image.add_local_file(repo_root() / "pins.toml", str(_SHIPPED / "pins.toml")).add_local_python_source(
+        "bh02_lab"
     )
     for path, leave_out in (ship or {}).items():
         source = repo_root() / path

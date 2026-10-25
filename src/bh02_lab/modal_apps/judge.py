@@ -50,9 +50,9 @@ verdicts = modal.Dict.from_name(VERDICTS, create_if_missing=True)
 judge_image = lab_image(ship={"battery": ["**/reference/**", "**/repo/**"], "src/bh02_lab": []})
 check_image = (
     modal.Image.debian_slim(python_version=_PYTHON)
-    .add_local_file(repo_root() / _HARNESS, "/opt/judge/cases.py", copy=True)
     .apt_install("util-linux")  # setpriv and prlimit: each case runs as nobody under limits
     .run_commands("mkdir -p /in /work /out && chmod 700 /in /out")
+    .add_local_file(repo_root() / _HARNESS, "/opt/judge/cases.py", copy=True)
 )
 
 
