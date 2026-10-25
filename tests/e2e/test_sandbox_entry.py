@@ -135,3 +135,43 @@ def test_the_key_reaches_the_server_and_not_the_models_code(tmp_path: Path) -> N
     assert results and "Traceback" in results[0]  # the read was tried, and the jail refused it
     for name in ("transcript.jsonl", "events.jsonl", "work.tar"):
         assert key.encode() not in (out / name).read_bytes(), name
+
+
+AGENT_CHECKOUT = Path(os.environ.get("BH02_AGENT_CHECKOUT", "/nonexistent"))
+
+
+@pytest.mark.skipif(
+    os.geteuid() != 0 or not (AGENT_CHECKOUT / ".venv" / "bin" / "bh-02").exists(),
+    reason="needs root and a bh-02 checkout an unprivileged user can run (BH02_AGENT_CHECKOUT)",
+)
+def test_without_a_jail_the_models_code_runs_as_the_agent_and_nothing_outlives_it() -> None:
+    import shutil
+    import tempfile
+    import time
+
+    root = Path(tempfile.mkdtemp(prefix="bh02-agent-"))
+    root.chmod(0o755)
+    try:
+        lab, work = root / "lab", root / "work"
+        lab.mkdir()
+        work.mkdir()
+        prompt = (
+            "import os, subprocess; open('answer.txt', 'w').write(str(os.getuid())); "
+            "subprocess.Popen(['sh', '-c', 'sleep 3; echo late > late.txt'], start_new_session=True)"
+        )
+        request = {"prompt": prompt, "provider": "bh_02.testing:repl_provider", "model": "repl", "budget_s": 60,
+                   "jail": "sandbox", "plugins": []}  # fmt: skip
+        (lab / "request.json").write_text(json.dumps(request))
+        done = subprocess.run(
+            [sys.executable, entry.__file__, "all", "--lab", str(lab), "--work", str(work), "--bh02",
+             str(AGENT_CHECKOUT), "--agent-uid", "1000"],
+            capture_output=True, text=True, timeout=180, check=False,
+        )  # fmt: skip
+        assert done.returncode == 0, done.stderr
+        result = json.loads((lab / "out" / "result.json").read_text())
+        assert result["ended"] == "replied" and result["isolated"] is True
+        assert (work / "answer.txt").read_text() == "1000"
+        time.sleep(5)
+        assert not (work / "late.txt").exists()
+    finally:
+        shutil.rmtree(root)

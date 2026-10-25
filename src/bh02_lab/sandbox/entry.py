@@ -22,16 +22,20 @@ by walking it without recursion, under the same caps a snapshot has; a workspace
 disk space that `run` frees before it writes, so a model that fills the disk can't stop the
 result being written.
 
-Without bh-02's own jail (`jail = "sandbox"`), bh-02 runs in a PID namespace of its own when the
-sandbox allows one: when bh-02 exits, the kernel ends everything the model started, so nothing
-changes the workspace while it is packed. Whether it did is in `result.json` as `isolated`.
+Without bh-02's own jail (`jail = "sandbox"`), the runner passes `--agent-uid`: bh-02 runs as that
+unprivileged user, and when it exits every process of that user is killed, so nothing the model
+started changes the workspace while it is packed. With no agent user (a developer's machine), a
+PID namespace of its own does the same when `unshare` can make one. Whether either did is in
+`result.json` as `isolated`.
 
 `models_toml`, `patch_toml`, `ended` and `packable` are pure; the steps do the work.
 """
 
 import argparse
+import contextlib
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -217,7 +221,11 @@ def prepare(args: argparse.Namespace) -> None:
     at["patch"].write_text(
         patch_toml(at["task"], at["out"] / "events.jsonl", request["budget_s"], confirm), encoding="utf-8"
     )
-    failed = _smoke(at, request["jail"] == "bh-02")
+    jailed = request["jail"] == "bh-02"
+    if not jailed and args.agent_uid is not None:
+        os.chown(at["local_env"], args.agent_uid, args.agent_uid)  # bh-02 reads it as that user
+    _writable_by(at["out"] / "events.jsonl", args.agent_uid if not jailed else None)
+    failed = _smoke(at, jailed, args.agent_uid)
     if failed is not None:
         raise SystemExit(f"bh-02 could not run here, before any of the model's code existed: {failed}")
     _write_genome(at["work"], request.get("plugins", ()))
@@ -229,7 +237,7 @@ def prepare(args: argparse.Namespace) -> None:
 _SMOKE_CODE = "print('smoke ' + 'ok')"
 
 
-def _smoke(at: dict[str, Path], jailed: bool) -> str | None:
+def _smoke(at: dict[str, Path], jailed: bool, agent_uid: int | None) -> str | None:
     """Run bh-02 once on its own fake model, in the same jail, on a throwaway workspace: whether
     bh-02 (its jail above all) can run here, found out before the model's code exists. None when
     it can, else why not. Its log is `out/smoke.log`."""
@@ -241,9 +249,10 @@ def _smoke(at: dict[str, Path], jailed: bool) -> str | None:
     (places["config"] / "bh-02" / "models.toml").write_text(models_toml(fake), encoding="utf-8")
     (smoke / "task.md").write_text(_SMOKE_CODE, encoding="utf-8")
     events = smoke / "events.jsonl"
+    _writable_by(events, agent_uid if not jailed else None)
     patch = smoke / "headless.toml"
     patch.write_text(patch_toml(smoke / "task.md", events, 120, "deny" if jailed else "allow"), encoding="utf-8")
-    code, _ = _bh02(at["bh02"], patch, places, jailed, timeout_s=300, log=at["out"] / "smoke.log")
+    code, _ = _bh02(at["bh02"], patch, places, jailed, timeout_s=300, log=at["out"] / "smoke.log", agent_uid=agent_uid)
     lines = events.read_text(encoding="utf-8", errors="replace").splitlines() if events.exists() else []
     if ended(lines, code if code is not None else -1) != "replied":
         return f"the smoke run ended with exit {code}; see out/smoke.log"
@@ -253,10 +262,17 @@ def _smoke(at: dict[str, Path], jailed: bool) -> str | None:
 
 
 def _bh02(
-    bh02: Path, patch: Path, places: dict[str, Path], jailed: bool, timeout_s: float, log: Path
+    bh02: Path,
+    patch: Path,
+    places: dict[str, Path],
+    jailed: bool,
+    timeout_s: float,
+    log: Path,
+    agent_uid: int | None = None,
 ) -> tuple[int | None, bool]:
     """Run bh-02 headless with `patch`, in `places["work"]`; its exit code (None if it could not
-    finish) and whether it ran isolated (its own jail, or a PID namespace of its own)."""
+    finish) and whether it ran isolated: in its own jail, or, without one, as `agent_uid` (every
+    process of that user is ended when bh-02 exits) or in a PID namespace of its own."""  # fmt: skip
     environment = {
         "PATH": f"{bh02 / '.venv' / 'bin'}:/usr/local/bin:/usr/bin:/bin",
         "HOME": str(places["home"]), "XDG_CONFIG_HOME": str(places["config"]),
@@ -264,7 +280,12 @@ def _bh02(
     }  # fmt: skip
     command = [str(bh02 / ".venv" / "bin" / "bh-02"), "--patch", str(patch)]
     isolated = jailed
-    if not jailed:
+    if not jailed and agent_uid is not None:
+        for place in places.values():
+            _own(place, agent_uid)
+        owner = ["setpriv", f"--reuid={agent_uid}", f"--regid={agent_uid}", "--clear-groups", "--"]
+        command, isolated = [*owner, *command, "--no-jail"], True
+    elif not jailed:
         command, isolated = _isolating([*command, "--no-jail"])
     try:
         with log.open("w", encoding="utf-8") as out:
@@ -275,6 +296,35 @@ def _bh02(
         return done.returncode, isolated
     except (OSError, subprocess.TimeoutExpired):
         return None, isolated
+    finally:
+        if not jailed and agent_uid is not None:
+            _end_user(agent_uid)
+
+
+def _writable_by(path: Path, uid: int | None) -> None:
+    """Create the file bh-02's headless row appends to, owned by the user bh-02 runs as."""
+    path.touch()
+    if uid is not None:
+        os.chown(path, uid, uid)
+
+
+def _own(root: Path, uid: int) -> None:
+    """Give `root` and everything under it to `uid`, so bh-02 running as it can work there."""
+    for directory, _, names in os.walk(root, followlinks=False):
+        for path in (Path(directory), *(Path(directory) / name for name in names)):
+            with contextlib.suppress(OSError):
+                os.chown(path, uid, uid, follow_symlinks=False)
+
+
+def _end_user(uid: int) -> None:
+    """Kill every process `uid` runs: bh-02 and whatever the model started, wherever it went."""
+    for entry in os.listdir("/proc"):
+        if entry.isdigit():
+            try:
+                if os.stat(f"/proc/{entry}").st_uid == uid:
+                    os.kill(int(entry), signal.SIGKILL)
+            except OSError:
+                pass
 
 
 def run(args: argparse.Namespace) -> None:
@@ -284,7 +334,7 @@ def run(args: argparse.Namespace) -> None:
     places = {"config": at["config"], "state": at["state"], "home": at["home"], "work": at["work"]}
     code, isolated = _bh02(
         at["bh02"], at["patch"], places, request["jail"] == "bh-02",
-        timeout_s=float(request["budget_s"]) + 300, log=at["out"] / "bh02.log",
+        timeout_s=float(request["budget_s"]) + 300, log=at["out"] / "bh02.log", agent_uid=args.agent_uid,
     )  # fmt: skip
     at["reserve"].unlink(missing_ok=True)  # the room to write what follows, whatever the model filled
     at["local_env"].unlink(missing_ok=True)
@@ -317,6 +367,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work", type=Path, default=Path("/work"))
     parser.add_argument("--bh02", type=Path, default=Path("/opt/bh-02"))
     parser.add_argument("--key-file", type=Path, default=None, help="the inference key; read, then removed")
+    parser.add_argument(
+        "--agent-uid", type=int, default=None,
+        help="without bh-02's jail: run bh-02 as this user, and end all its processes after (root only)",
+    )  # fmt: skip
     args = parser.parse_args(argv)
     if args.step in ("prepare", "all"):
         prepare(args)

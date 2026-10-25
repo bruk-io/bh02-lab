@@ -39,6 +39,7 @@ _ENTRY = "/opt/lab/entry.py"
 _ENTRY_SOURCE = "src/bh02_lab/sandbox/entry.py"
 _LEFT_OUT = ["tests", "tests/**", "**/__pycache__/**", "**/.pytest_cache/**", "**/*.egg-info/**"]
 _SANDBOX_GRACE_S = 600
+_AGENT_UID = 1000  # who bh-02 runs as when it has no jail of its own
 _RUNTIMES: dict[str, Literal["gvisor", "vm"]] = {"gvisor": "gvisor", "vm": "vm"}
 _OUTPUTS = ("result.json", "work.tar", "transcript.jsonl", "events.jsonl", "bh02.log")
 
@@ -55,7 +56,13 @@ def _rollout_image(pinned: Pins) -> modal.Image:
         # compiler and a current Rust toolchain (Debian's rustc is too old for pydantic-core).
         .apt_install("git", "bubblewrap", "ca-certificates", "curl", "build-essential", "pkg-config")
         .run_commands("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal")
-        .env({"PATH": "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"})
+        .env(
+            {
+                "PATH": "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                # outside /root, so bh-02's interpreter runs for the agent user too (jail = "sandbox")
+                "UV_PYTHON_INSTALL_DIR": "/opt/uv-python",
+            }
+        )
         .pip_install(f"uv=={bh02.uv}")  # the base image's own uv is too old to install Python 3.15
         .run_commands(
             f"git clone {bh02.repo} /opt/bh-02",
@@ -66,7 +73,9 @@ def _rollout_image(pinned: Pins) -> modal.Image:
         .add_local_dir(repo_root() / "headless", _HEADLESS, copy=True, ignore=_LEFT_OUT)
         .run_commands(f"uv pip install --python /opt/bh-02/.venv/bin/python --no-deps {_HEADLESS}")
         .add_local_file(repo_root() / _ENTRY_SOURCE, _ENTRY, copy=True)
-        .run_commands("mkdir -p /work /lab")
+        .run_commands(
+            f"mkdir -p /work /lab && useradd --uid {_AGENT_UID} --no-create-home --shell /usr/sbin/nologin agent"
+        )
     )
 
 
@@ -164,7 +173,9 @@ def _sandbox_run(
         files.make_directory("/lab", create_parents=True)
         files.write_text(json.dumps(payload), "/lab/request.json")
         files.write_text(key, "/lab/key")
-        prepare = sandbox.exec("python3", _ENTRY, "prepare", "--key-file", "/lab/key", timeout=600)
+        prepare = sandbox.exec(
+            "python3", _ENTRY, "prepare", "--key-file", "/lab/key", "--agent-uid", str(_AGENT_UID), timeout=600
+        )
         prepare.wait()
         before = serving()
         failed = lab_failure(prepare.returncode, before, True)
@@ -176,7 +187,9 @@ def _sandbox_run(
                 smoke = b""
             return f"{failed}: {told}", {"smoke.log": smoke}, False
         # From here the model's code exists: whatever goes wrong may be its doing.
-        sandbox.exec("python3", _ENTRY, "run", timeout=budget + _SANDBOX_GRACE_S - 60).wait()
+        sandbox.exec(
+            "python3", _ENTRY, "run", "--agent-uid", str(_AGENT_UID), timeout=budget + _SANDBOX_GRACE_S - 60
+        ).wait()
         failed = lab_failure(0, True, serving())
         outputs: dict[str, bytes | None] = {}
         tar_over = False
