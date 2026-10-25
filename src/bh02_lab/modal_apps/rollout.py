@@ -49,7 +49,12 @@ def _rollout_image(pinned: Pins) -> modal.Image:
     bh02 = pinned.bh02
     return (
         modal.Image.debian_slim(python_version="3.13")
-        .apt_install("git", "bubblewrap", "ca-certificates")
+        # bh-02 runs on Python 3.15, which several of its dependencies publish no wheels for yet
+        # (pydantic-core, tree-sitter, pyyaml): uv builds them from source, so the image needs a C
+        # compiler and a current Rust toolchain (Debian's rustc is too old for pydantic-core).
+        .apt_install("git", "bubblewrap", "ca-certificates", "curl", "build-essential", "pkg-config")
+        .run_commands("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal")
+        .env({"PATH": "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"})
         .pip_install("uv")
         .run_commands(
             f"git clone {bh02.repo} /opt/bh-02",
