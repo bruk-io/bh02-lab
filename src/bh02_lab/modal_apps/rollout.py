@@ -18,7 +18,7 @@ import json
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import modal
@@ -39,6 +39,7 @@ _ENTRY = "/opt/lab/entry.py"
 _ENTRY_SOURCE = "src/bh02_lab/sandbox/entry.py"
 _LEFT_OUT = ["tests", "tests/**", "**/__pycache__/**", "**/.pytest_cache/**", "**/*.egg-info/**"]
 _SANDBOX_GRACE_S = 600
+_RUNTIMES: dict[str, Literal["gvisor", "vm"]] = {"gvisor": "gvisor", "vm": "vm"}
 _OUTPUTS = ("result.json", "work.tar", "transcript.jsonl", "events.jsonl", "bh02.log")
 
 app = modal.App(APPS["rollout"])
@@ -141,6 +142,7 @@ def _sandbox_run(
     allow: list[str] | None,
     key: str,
     serving: Callable[[], bool],
+    runtime: str = _PINS.rollout.runtime,
 ) -> tuple[str | None, dict[str, bytes | None], bool]:
     """Start a fresh sandbox, prepare it, check serving, run bh-02, check serving again, read the
     outputs back, and end it. Returns why the lab failed (None if it didn't), each output (None
@@ -150,7 +152,7 @@ def _sandbox_run(
     budget = int(payload["budget_s"])
     sandbox = modal.Sandbox.create(
         "sleep", "infinity", app=app, image=rollout_image, timeout=budget + _SANDBOX_GRACE_S,
-        cpu=2.0, memory=(4096, 8192), workdir="/work", outbound_domain_allowlist=allow,
+        cpu=2.0, memory=(4096, 8192), workdir="/work", outbound_domain_allowlist=allow, runtime=_RUNTIMES[runtime],
     )  # fmt: skip
     try:
         files = sandbox.filesystem
@@ -162,18 +164,23 @@ def _sandbox_run(
         files.make_directory("/lab", create_parents=True)
         files.write_text(json.dumps(payload), "/lab/request.json")
         files.write_text(key, "/lab/key")
-        prepare = sandbox.exec("python3", _ENTRY, "prepare", "--key-file", "/lab/key", timeout=300)
+        prepare = sandbox.exec("python3", _ENTRY, "prepare", "--key-file", "/lab/key", timeout=600)
         prepare.wait()
         before = serving()
         failed = lab_failure(prepare.returncode, before, True)
         if failed is not None:
-            return failed, {}, False
+            told = str(prepare.stderr.read())[-600:]
+            try:
+                smoke = files.read_bytes("/lab/out/smoke.log")
+            except Exception:  # no smoke log: the failure came before the smoke run
+                smoke = b""
+            return f"{failed}: {told}", {"smoke.log": smoke}, False
         # From here the model's code exists: whatever goes wrong may be its doing.
         sandbox.exec("python3", _ENTRY, "run", timeout=budget + _SANDBOX_GRACE_S - 60).wait()
         failed = lab_failure(0, True, serving())
         outputs: dict[str, bytes | None] = {}
         tar_over = False
-        for name in _OUTPUTS:
+        for name in (*_OUTPUTS, "smoke.log"):
             try:
                 if name == "work.tar" and files.stat(f"/lab/out/{name}").size > int(MAX_BYTES * 1.25):
                     tar_over, outputs[name] = True, None
@@ -260,32 +267,38 @@ def image_digest() -> str:
 
 
 @app.function(image=runner_image, timeout=30 * 60)
-def probe_jail() -> dict[str, Any]:
-    """TASK-0001.04: does bh-02's jail come up inside a Modal Sandbox? Runs bh-02 headless on its
-    own fake model, jailed, and returns the jail's status line, the result and bh-02's log."""
+def probe_jail(jail: str = "bh-02", runtime: str = "gvisor") -> dict[str, Any]:
+    """TASK-0001.04: can bh-02 run, and isolate the model's code, inside a Modal Sandbox? Runs
+    bh-02 headless on its own fake model with `jail` ("bh-02": its own jail; "sandbox": no jail,
+    a PID namespace of its own if the sandbox allows) on `runtime` ("gvisor" or "vm"), and
+    returns what happened: the smoke run's log when bh-02 could not start, else the jail's status
+    line, the result and bh-02's log."""
     payload = {
         "prompt": "import os; print(os.getuid())",
         "provider": "bh_02.testing:repl_provider",
         "model": "repl",
         "budget_s": 120,
-        "jail": "bh-02",
+        "jail": jail,
         "plugins": [],
     }
-    failed, outputs, _ = _sandbox_run(payload, [], None, key="", serving=lambda: True)
-    text = {name: (outputs.get(name) or b"").decode(errors="replace") for name in _OUTPUTS if name != "work.tar"}
+    failed, outputs, _ = _sandbox_run(payload, [], None, key="", serving=lambda: True, runtime=runtime)
+    text = {name: (outputs.get(name) or b"").decode(errors="replace") for name in (*_OUTPUTS, "smoke.log")}
     return {
+        "jail": jail,
+        "runtime": runtime,
         "failed": failed,
+        "smoke_log": text["smoke.log"][-3000:],
         "result": text["result.json"],
-        "jail": [line for line in text["events.jsonl"].splitlines() if '"field": "jail"' in line],
-        "events": text["events.jsonl"][-4000:],
-        "log": text["bh02.log"][-4000:],
+        "jail_status": [line for line in text["events.jsonl"].splitlines() if '"field": "jail"' in line],
+        "events": text["events.jsonl"][-3000:],
+        "log": text["bh02.log"][-3000:],
     }
 
 
 @app.local_entrypoint()
-def probe() -> None:
-    """`modal run -m bh02_lab.modal_apps.rollout::probe`: run `probe_jail` and print what it found
-    (a function run on its own prints nothing of what it returns)."""
+def probe(jail: str = "bh-02", runtime: str = "gvisor") -> None:
+    """`modal run -m bh02_lab.modal_apps.rollout::probe [--jail sandbox] [--runtime vm]`: run
+    `probe_jail` and print what it found (a function run on its own prints nothing it returns)."""
     import json as json_module
 
-    print(json_module.dumps(probe_jail.remote(), indent=2))
+    print(json_module.dumps(probe_jail.remote(jail, runtime), indent=2))

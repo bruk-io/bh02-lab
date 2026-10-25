@@ -20,6 +20,7 @@ __all__ = ["Bh02", "Model", "Pins", "PinsError", "Rollout", "Serving", "load", "
 
 PINS = Path(__file__).resolve().parents[2] / "pins.toml"
 _JAILS = frozenset({"bh-02", "sandbox"})
+_RUNTIMES = frozenset({"gvisor", "vm"})
 
 
 class PinsError(ValueError):
@@ -60,10 +61,12 @@ class Serving:
 
 @dataclass(frozen=True, slots=True)
 class Rollout:
-    """How a rollout runs: its time budget and which jail holds the model's code."""
+    """How a rollout runs: its time budget, which jail holds the model's code, and the Modal
+    Sandbox runtime it runs on."""
 
     budget_s: float
     jail: str
+    runtime: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,12 +99,14 @@ def parsed(data: Mapping[str, Any]) -> Pins:
                 args=tuple(str(arg) for arg in serving["args"]),
                 generation={str(k): float(v) for k, v in serving["generation"].items()},
             ),
-            rollout=Rollout(float(rollout["budget_s"]), str(rollout["jail"])),
+            rollout=Rollout(float(rollout["budget_s"]), str(rollout["jail"]), str(rollout["runtime"])),
         )
     except (KeyError, TypeError, ValueError, AttributeError) as error:
         raise PinsError(f"pins.toml: {type(error).__name__}: {error}") from error
     if len(pins.bh02.sha) != 40:
         raise PinsError("pins.toml: bh02.sha must be a full 40-character commit, so the image is reproducible")
+    if pins.rollout.runtime not in _RUNTIMES:
+        raise PinsError(f"pins.toml: rollout.runtime must be one of {sorted(_RUNTIMES)}, not {pins.rollout.runtime!r}")
     if pins.rollout.jail not in _JAILS:
         raise PinsError(f"pins.toml: rollout.jail must be one of {sorted(_JAILS)}, not {pins.rollout.jail!r}")
     return pins

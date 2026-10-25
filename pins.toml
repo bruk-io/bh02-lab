@@ -33,3 +33,6 @@ budget_s = 1500
 # "bh-02": bh-02's own jail inside the sandbox (bubblewrap); "sandbox": --no-jail, the sandbox is the
 # only jail and every question is answered yes. TASK-0001.04 decides which runs on Modal.
 jail = "bh-02"
+# The Modal Sandbox runtime: "gvisor" (Modal's default) or "vm". Under gVisor, bubblewrap can't set up
+# loopback in a new network namespace, so bh-02's own jail does not start (TASK-0001.04).
+runtime = "gvisor"

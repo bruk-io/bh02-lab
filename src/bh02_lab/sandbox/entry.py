@@ -2,8 +2,9 @@
 workspace, the transcript and the event log where the runner reads them.
 
 It runs in two steps, two separate commands, so the runner can tell the lab's failures from the
-model's: `prepare` sets everything up before any of the model's code exists (its failure is the
-lab's), and `run` starts bh-02 and packs up afterwards (anything that goes wrong from there on
+model's: `prepare` sets everything up before any of the model's code exists, and runs bh-02 once
+on its own fake model in the same jail (a smoke run), so a jail that can't start here is the lab's
+failure and not the model's; and `run` starts bh-02 and packs up afterwards (anything that goes wrong from there on
 counts against the model, since the model's code may have caused it). `all` does both, for
 tests.
 
@@ -193,7 +194,11 @@ def _paths(args: argparse.Namespace) -> dict[str, Path]:
 
 
 def prepare(args: argparse.Namespace) -> None:
-    """Set bh-02 up for the request, before any of the model's code exists."""
+    """Set bh-02 up for the request, before any of the model's code exists.
+
+    Raises:
+        SystemExit: bh-02 could not run here (the smoke run failed): the lab's failure.
+    """
     at = _paths(args)
     request = json.loads((at["lab"] / "request.json").read_text(encoding="utf-8"))
     for directory in (at["out"], at["config"] / "bh-02", at["state"], at["home"]):
@@ -212,35 +217,75 @@ def prepare(args: argparse.Namespace) -> None:
     at["patch"].write_text(
         patch_toml(at["task"], at["out"] / "events.jsonl", request["budget_s"], confirm), encoding="utf-8"
     )
+    failed = _smoke(at, request["jail"] == "bh-02")
+    if failed is not None:
+        raise SystemExit(f"bh-02 could not run here, before any of the model's code existed: {failed}")
     _write_genome(at["work"], request.get("plugins", ()))
     (at["out"] / "result.json").write_text(json.dumps({"exit_code": None, "ended": "crashed"}), encoding="utf-8")
     with at["reserve"].open("wb") as file:
         file.write(b"\0" * _RESERVE)
 
 
-def run(args: argparse.Namespace) -> None:
-    """Run bh-02 on the prepared task, then leave the transcript, the workspace and the result."""
-    at = _paths(args)
-    request = json.loads((at["lab"] / "request.json").read_text(encoding="utf-8"))
-    jailed = request["jail"] == "bh-02"
+_SMOKE_CODE = "print('smoke ' + 'ok')"
+
+
+def _smoke(at: dict[str, Path], jailed: bool) -> str | None:
+    """Run bh-02 once on its own fake model, in the same jail, on a throwaway workspace: whether
+    bh-02 (its jail above all) can run here, found out before the model's code exists. None when
+    it can, else why not. Its log is `out/smoke.log`."""
+    smoke = at["lab"] / "smoke"
+    places = {name: smoke / name for name in ("config", "state", "home", "work")}
+    for directory in (places["config"] / "bh-02", places["state"], places["home"], places["work"]):
+        directory.mkdir(parents=True, exist_ok=True)
+    fake = {"provider": "bh_02.testing:repl_provider", "model": "repl"}
+    (places["config"] / "bh-02" / "models.toml").write_text(models_toml(fake), encoding="utf-8")
+    (smoke / "task.md").write_text(_SMOKE_CODE, encoding="utf-8")
+    events = smoke / "events.jsonl"
+    patch = smoke / "headless.toml"
+    patch.write_text(patch_toml(smoke / "task.md", events, 120, "deny" if jailed else "allow"), encoding="utf-8")
+    code, _ = _bh02(at["bh02"], patch, places, jailed, timeout_s=300, log=at["out"] / "smoke.log")
+    lines = events.read_text(encoding="utf-8", errors="replace").splitlines() if events.exists() else []
+    if ended(lines, code if code is not None else -1) != "replied":
+        return f"the smoke run ended with exit {code}; see out/smoke.log"
+    if not any('"tool_result"' in line and "smoke ok" in line and "Traceback" not in line for line in lines):
+        return "the smoke run's python call did not answer; see out/smoke.log"
+    return None
+
+
+def _bh02(
+    bh02: Path, patch: Path, places: dict[str, Path], jailed: bool, timeout_s: float, log: Path
+) -> tuple[int | None, bool]:
+    """Run bh-02 headless with `patch`, in `places["work"]`; its exit code (None if it could not
+    finish) and whether it ran isolated (its own jail, or a PID namespace of its own)."""
     environment = {
-        "PATH": f"{at['bh02'] / '.venv' / 'bin'}:/usr/local/bin:/usr/bin:/bin",
-        "HOME": str(at["home"]), "XDG_CONFIG_HOME": str(at["config"]), "XDG_STATE_HOME": str(at["state"]),
-        "LANG": "C.UTF-8",
+        "PATH": f"{bh02 / '.venv' / 'bin'}:/usr/local/bin:/usr/bin:/bin",
+        "HOME": str(places["home"]), "XDG_CONFIG_HOME": str(places["config"]),
+        "XDG_STATE_HOME": str(places["state"]), "LANG": "C.UTF-8",
     }  # fmt: skip
-    command = [str(at["bh02"] / ".venv" / "bin" / "bh-02"), "--patch", str(at["patch"])]
+    command = [str(bh02 / ".venv" / "bin" / "bh-02"), "--patch", str(patch)]
     isolated = jailed
     if not jailed:
         command, isolated = _isolating([*command, "--no-jail"])
     try:
-        with (at["out"] / "bh02.log").open("w", encoding="utf-8") as log:
+        with log.open("w", encoding="utf-8") as out:
             done = subprocess.run(
-                command, cwd=at["work"], env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                timeout=float(request["budget_s"]) + 300, check=False,
+                command, cwd=places["work"], env=environment, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                timeout=timeout_s, check=False,
             )  # fmt: skip
-        code: int | None = done.returncode
+        return done.returncode, isolated
     except (OSError, subprocess.TimeoutExpired):
-        code = None
+        return None, isolated
+
+
+def run(args: argparse.Namespace) -> None:
+    """Run bh-02 on the prepared task, then leave the transcript, the workspace and the result."""
+    at = _paths(args)
+    request = json.loads((at["lab"] / "request.json").read_text(encoding="utf-8"))
+    places = {"config": at["config"], "state": at["state"], "home": at["home"], "work": at["work"]}
+    code, isolated = _bh02(
+        at["bh02"], at["patch"], places, request["jail"] == "bh-02",
+        timeout_s=float(request["budget_s"]) + 300, log=at["out"] / "bh02.log",
+    )  # fmt: skip
     at["reserve"].unlink(missing_ok=True)  # the room to write what follows, whatever the model filled
     at["local_env"].unlink(missing_ok=True)
     if at["kept_env"].exists():

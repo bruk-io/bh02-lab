@@ -38,6 +38,7 @@ def _pins_now(battery: str) -> dict[str, str]:
         "judge_sha": modal.Function.from_name(APPS["judge"], "pin").remote(battery),
         "bh02_sha": _PINS.bh02.sha,
         "jail": _PINS.rollout.jail,
+        "runtime": _PINS.rollout.runtime,
     }
 
 
