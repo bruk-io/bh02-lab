@@ -5,6 +5,7 @@
 repo = "https://github.com/bruk-io/bh-02"
 sha = "dc4bd33cf73bbcfc02089f91c47a0b4906f5a9b8"
 python = "3.15"
+uv = "0.11.32"  # builds bh-02's environment; older uv has no Python 3.15 to download
 
 [model]
 repo = "ornith-ai/Ornith-1.5-9B"

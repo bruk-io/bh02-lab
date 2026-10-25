@@ -55,7 +55,7 @@ def _rollout_image(pinned: Pins) -> modal.Image:
         .apt_install("git", "bubblewrap", "ca-certificates", "curl", "build-essential", "pkg-config")
         .run_commands("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal")
         .env({"PATH": "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"})
-        .pip_install("uv")
+        .pip_install(f"uv=={bh02.uv}")  # the base image's own uv is too old to install Python 3.15
         .run_commands(
             f"git clone {bh02.repo} /opt/bh-02",
             f"git -C /opt/bh-02 checkout --detach {bh02.sha}",

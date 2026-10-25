@@ -28,11 +28,13 @@ class PinsError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Bh02:
-    """Where bh-02 comes from: its repository, the commit, and the Python it runs on."""
+    """Where bh-02 comes from: its repository, the commit, the Python it runs on, and the uv
+    that builds its environment."""
 
     repo: str
     sha: str
     python: str
+    uv: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +85,7 @@ def parsed(data: Mapping[str, Any]) -> Pins:
     try:
         bh02, model, serving, rollout = (data[name] for name in ("bh02", "model", "serving", "rollout"))
         pins = Pins(
-            bh02=Bh02(str(bh02["repo"]), str(bh02["sha"]), str(bh02["python"])),
+            bh02=Bh02(str(bh02["repo"]), str(bh02["sha"]), str(bh02["python"]), str(bh02["uv"])),
             model=Model(
                 str(model["repo"]), str(model["revision"]), str(model["served_name"]), float(model["temperature"])
             ),
