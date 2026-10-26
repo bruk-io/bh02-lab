@@ -44,10 +44,12 @@ def proof(model_name: str = _MODEL, steps: int = 60) -> dict[str, Any]:
     """Train the adapter, sample with and without it, and keep what happened."""
     import importlib.metadata
 
+    from unsloth import FastLanguageModel  # first: Unsloth patches trl and transformers as they load
+    from unsloth.chat_templates import train_on_responses_only
+
+    # isort: split
     from datasets import Dataset
     from trl import SFTConfig, SFTTrainer
-    from unsloth import FastLanguageModel
-    from unsloth.chat_templates import train_on_responses_only
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name, max_seq_length=1024, load_in_4bit=False, load_in_16bit=True, full_finetuning=False
@@ -60,10 +62,10 @@ def proof(model_name: str = _MODEL, steps: int = 60) -> dict[str, Any]:
     rows = [text.apply_chat_template(c, tokenize=False, enable_thinking=False) for c in conversations()]
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=text,  # TRL 1.x: `tokenizer` is gone; the text tokenizer, not a processor
         train_dataset=Dataset.from_dict({"text": rows}),
         args=SFTConfig(
-            dataset_text_field="text", per_device_train_batch_size=1, gradient_accumulation_steps=4,
+            dataset_text_field="text", max_length=1024, per_device_train_batch_size=1, gradient_accumulation_steps=4,
             warmup_steps=5, max_steps=steps, learning_rate=2e-4, logging_steps=1, optim="adamw_8bit",
             weight_decay=0.01, lr_scheduler_type="linear", seed=3407, output_dir="/tmp/proof",
             report_to="none", dataset_num_proc=1,
