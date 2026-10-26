@@ -32,7 +32,7 @@ generation = { top_p = 0.95, top_k = 20, min_p = 0.0, presence_penalty = 0.0, re
 budget_s = 1500
 # "bh-02": bh-02's own jail inside the sandbox (bubblewrap); "sandbox": --no-jail, the sandbox is the
 # only jail and every question is answered yes. TASK-0001.04 decides which runs on Modal.
-jail = "bh-02"
+jail = "sandbox"  # TASK-0001.04: bh-02's own jail can't start under gVisor; the sandbox and the agent user hold the model's code
 # The Modal Sandbox runtime: "gvisor" (Modal's default) or "vm". Under gVisor, bubblewrap can't set up
 # loopback in a new network namespace, so bh-02's own jail does not start (TASK-0001.04).
 runtime = "gvisor"
